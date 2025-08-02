@@ -2,13 +2,21 @@ services:
   - type: web
     name: pulse-v2
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    buildCommand: |
+      pip install --upgrade pip && \
+      pip install -r requirements.txt
+    startCommand: gunicorn -k uvicorn.workers.UvicornWorker -c gunicorn_conf.py main:app
     envVars:
       - key: PORT
         value: 10000
       - key: PYTHONUNBUFFERED
         value: 1
+      - key: WORKERS_PER_CORE
+        value: 2
+      - key: HOST
+        value: 0.0.0.0
+      - key: LOG_LEVEL
+        value: info
       # Add your environment variables here, for example:
       # - key: OPENAI_API_KEY
       #   sync: false  # This means the value won't be committed to git
