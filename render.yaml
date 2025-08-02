@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: pulse-v2
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: PYTHONUNBUFFERED
+        value: 1
+      # Add your environment variables here, for example:
+      # - key: OPENAI_API_KEY
+      #   sync: false  # This means the value won't be committed to git
+      # - key: JINA_API_KEY
+      #   sync: false
+      # - key: SERPAPI_API_KEY
+      #   sync: false
+      # - key: AZURE_OPENAI_API_KEY
+      #   sync: false
+      # - key: AZURE_OPENAI_ENDPOINT
+      #   sync: false
+      # - key: AZURE_OPENAI_DEPLOYMENT_NAME
+      #   sync: false
+    plan: free  # or 'starter', 'standard', 'plus' for paid plans
+    numInstances: 1

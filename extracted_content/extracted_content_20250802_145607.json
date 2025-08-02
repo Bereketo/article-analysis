@@ -1,0 +1,19 @@
+{
+  "extracted_content": [],
+  "total_articles": 0,
+  "processing_summary": {
+    "total_urls": 2,
+    "successful_extractions": 0,
+    "failed_extractions": 2,
+    "start_time": "2025-08-02T11:56:04.622072",
+    "end_time": "2025-08-02T11:56:07.110271",
+    "duration_seconds": 2.488199,
+    "parameters": {
+      "aliases_used": [
+        "RIL",
+        "Reliance"
+      ],
+      "parent_company": "Reliance Industries Limited"
+    }
+  }
+}
