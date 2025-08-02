@@ -17,6 +17,8 @@ services:
         value: 0.0.0.0
       - key: LOG_LEVEL
         value: info
+      - key: SERVER_URL  
+        value: https://article-analysis-0e4x.onrender.com
       # Add your environment variables here, for example:
       # - key: OPENAI_API_KEY
       #   sync: false  # This means the value won't be committed to git
