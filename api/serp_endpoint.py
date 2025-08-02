@@ -19,12 +19,13 @@ class SerpResponse(BaseModel):
     total_articles: int
     processing_summary: Dict[str, Any]
 
+class ErrorResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
 app = FastAPI(
     title="SERP API",
-    description="""
-    Search Engine Results Page (SERP) API for performing web searches and extracting content.
-    This API allows you to search across multiple search engines and content types.
-    """,
+    description="Search Engine Results Page (SERP) API for performing web searches and extracting content.",
     version="1.0.0"
 )
 logger = logging.getLogger(__name__)

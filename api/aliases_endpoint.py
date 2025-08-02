@@ -21,6 +21,10 @@ class AliasResponse(BaseModel):
     confidence_score: Optional[float] = None
     total_adverse_queries: Optional[int] = None
 
+class ErrorResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
+
 app = FastAPI()
 logger = logging.getLogger(__name__)
 
