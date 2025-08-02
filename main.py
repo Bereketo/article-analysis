@@ -48,11 +48,16 @@ app = FastAPI(
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with your frontend URL
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount the endpoints BEFORE defining custom_openapi
+app.mount("/api/aliases", aliases_app)
+app.mount("/api/serp", serp_app)
+app.mount("/api/content-extraction", content_extraction_app)
 
 def custom_openapi():
     if app.openapi_schema:
@@ -74,20 +79,29 @@ def custom_openapi():
     server_url = os.getenv("SERVER_URL", "http://localhost:8000")
     openapi_schema["servers"] = [{"url": server_url}]
     
-    # Add more detailed documentation
-    openapi_schema["info"]["x-logo"] = {
-        "url": "https://fastapi.tiangolo.com/img/logo-margin/logo-teal.png"
-    }
+    # Merge OpenAPI schemas from mounted apps
+    for route in app.routes:
+        if hasattr(route, 'app') and hasattr(route.app, 'openapi'):
+            sub_openapi = route.app.openapi()
+            if sub_openapi and 'paths' in sub_openapi:
+                for path, methods in sub_openapi['paths'].items():
+                    full_path = f"{route.path_regex.pattern.rstrip('/')}{path}"
+                    full_path = full_path.replace('\\', '').replace('.*', '')
+                    openapi_schema['paths'][full_path] = methods
+                
+                # Merge components (schemas, etc.)
+                if 'components' in sub_openapi:
+                    if 'components' not in openapi_schema:
+                        openapi_schema['components'] = {}
+                    for component_type, components in sub_openapi['components'].items():
+                        if component_type not in openapi_schema['components']:
+                            openapi_schema['components'][component_type] = {}
+                        openapi_schema['components'][component_type].update(components)
     
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
 app.openapi = custom_openapi
-
-# Mount the endpoints
-app.mount("/api/aliases", aliases_app)
-app.mount("/api/serp", serp_app)
-app.mount("/api/content-extraction", content_extraction_app)
 
 # Root endpoint
 @app.get("/")
