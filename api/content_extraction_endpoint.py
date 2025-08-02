@@ -1,22 +1,136 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from fastapi import FastAPI, HTTPException, status, Query, Depends
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, HttpUrl, validator
+from typing import List, Dict, Any, Optional, Union
 import logging
 import re
 from datetime import datetime
 from urllib.parse import urlparse
-from agents.improved_content_extraction_agent import ImprovedContentExtractionAgent
+from enum import Enum
 import os
 import json
+from agents.improved_content_extraction_agent import ImprovedContentExtractionAgent
 from langchain_openai import AzureChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
 
-app = FastAPI()
+# Initialize FastAPI app with metadata
+app = FastAPI(
+    title="Content Extraction API",
+    description="""
+    Advanced content extraction API that uses AI to extract and clean content from web pages.
+    Features:
+    - Extracts main article content from any URL
+    - Cleans and formats content for readability
+    - Handles multiple URLs asynchronously
+    - Uses AI for advanced content cleaning
+    """,
+    version="1.0.0"
+)
+
+# Configure logging
 logger = logging.getLogger(__name__)
+
+# Enums for content types
+class ContentType(str, Enum):
+    ARTICLE = "article"
+    BLOG_POST = "blog_post"
+    NEWS_ARTICLE = "news_article"
+    PRODUCT_PAGE = "product_page"
+    FORUM = "forum"
+    OTHER = "other"
+
+# Pydantic models for request/response
+class UrlExtractionRequest(BaseModel):
+    """Individual URL extraction request"""
+    url: HttpUrl = Field(..., description="URL of the page to extract content from")
+    content_type: Optional[ContentType] = Field(
+        ContentType.ARTICLE,
+        description="Type of content expected at the URL"
+    )
+    include_metadata: Optional[bool] = Field(
+        True,
+        description="Whether to include metadata in the response"
+    )
+    include_raw_text: Optional[bool] = Field(
+        False,
+        description="Whether to include raw extracted text before cleaning"
+    )
+
+class ContentExtractionRequest(BaseModel):
+    """Request model for content extraction"""
+    urls: List[UrlExtractionRequest] = Field(
+        ...,
+        description="List of URLs to extract content from",
+        min_items=1,
+        max_items=50
+    )
+    aliases: List[str] = Field(
+        ...,
+        description="List of company name aliases to include in content analysis",
+        min_items=1
+    )
+    parent_company_name: Optional[str] = Field(
+        "Unknown",
+        description="Name of the parent company for context"
+    )
+    language: Optional[str] = Field(
+        "en",
+        description="Language code for content processing (e.g., 'en', 'es', 'fr')",
+        min_length=2,
+        max_length=5
+    )
+    include_llm_cleaning: Optional[bool] = Field(
+        True,
+        description="Whether to use LLM for advanced content cleaning"
+    )
+
+class ContentMetadata(BaseModel):
+    """Metadata about the extracted content"""
+    url: HttpUrl = Field(..., description="Source URL of the content")
+    title: Optional[str] = Field(None, description="Title of the web page")
+    author: Optional[str] = Field(None, description="Author of the content")
+    published_date: Optional[datetime] = Field(None, description="Publication date")
+    language: Optional[str] = Field(None, description="Detected language of the content")
+    word_count: Optional[int] = Field(None, description="Number of words in the content")
+    domain: Optional[str] = Field(None, description="Domain of the source URL")
+    content_type: Optional[ContentType] = Field(None, description="Type of content")
+    extraction_timestamp: datetime = Field(..., description="When the content was extracted")
+
+class ExtractedContentItem(BaseModel):
+    """Single extracted content item"""
+    content: str = Field(..., description="The cleaned and formatted content")
+    metadata: ContentMetadata = Field(..., description="Metadata about the content")
+    raw_text: Optional[str] = Field(None, description="Raw extracted text before cleaning")
+    processing_time_ms: Optional[float] = Field(None, description="Time taken to process in milliseconds")
+
+class ProcessingSummary(BaseModel):
+    """Summary of the content extraction process"""
+    total_urls: int = Field(..., description="Total number of URLs processed")
+    successful_extractions: int = Field(..., description="Number of successful extractions")
+    failed_extractions: int = Field(..., description="Number of failed extractions")
+    total_processing_time_seconds: float = Field(..., description="Total processing time in seconds")
+    average_processing_time_seconds: float = Field(..., description="Average processing time per URL in seconds")
+
+class ContentExtractionResponse(BaseModel):
+    """Response model for content extraction"""
+    items: List[ExtractedContentItem] = Field(..., description="List of extracted content items")
+    summary: ProcessingSummary = Field(..., description="Summary of the extraction process")
+    request_metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional metadata about the request"
+    )
+
+class ErrorResponse(BaseModel):
+    """Standard error response model"""
+    error: str = Field(..., description="Error message")
+    details: Optional[Dict[str, Any]] = Field(None, description="Additional error details")
+    status_code: int = Field(..., description="HTTP status code")
+
+# Initialize the content extraction agent
+extractor = ImprovedContentExtractionAgent()
 
 def get_llm() -> AzureChatOpenAI:
     """Initialize and return the Azure OpenAI LLM"""
-    from langchain_openai import AzureChatOpenAI
     return AzureChatOpenAI(
         openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2023-05-15"),
         azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
@@ -24,224 +138,174 @@ def get_llm() -> AzureChatOpenAI:
         max_tokens=4000
     )
 
-async def format_content_with_llm(text: str, llm: AzureChatOpenAI) -> str:
-    """
-    Use LLM to clean and format the extracted content for better readability.
-    This is more effective than regex for handling complex content structures.
-    """
-    if not text or len(text.strip()) < 50:  # Skip if text is too short to be meaningful
-        return text
-        
-    try:
-        # System message to instruct the LLM how to format the content
-        system_message = SystemMessage(content="""
-        You are a helpful assistant that cleans and formats web article content.
-        Your task is to:
-        1. Remove any navigation menus, headers, footers, and ads
-        2. Keep only the main article content
-        3. Format the text with proper paragraphs and newlines
-        4. Ensure each sentence is on a new line when appropriate
-        5. Use double newlines between paragraphs
-        6. Format lists with proper bullet points and newlines
-        7. Preserve tables and format them with proper spacing
-        8. Remove any duplicate content
-        9. Ensure proper sentence structure
-        10. Remove any remaining HTML or markdown tags
-        11. Preserve important information like dates, names, and key facts
-        
-        Important: Make sure to use proper newlines and spacing for better readability.
-        Return only the cleaned content, no additional explanations.
-        """)
-        
-        # Prepare the user message with the content to be cleaned
-        user_message = HumanMessage(content=f"Clean and format this article content:\n\n{text}")
-        
-        # Get the response from the LLM
-        response = await llm.agenerate(messages=[[system_message, user_message]])
-        
-        # Extract the cleaned content
-        cleaned_content = response.generations[0][0].text.strip()
-        
-        return cleaned_content if cleaned_content else text  # Fallback to original if empty
-        
-    except Exception as e:
-        logger.error(f"Error formatting content with LLM: {str(e)}")
-        return text  # Return original text in case of error
-
-def format_content(text: str) -> str:
-    """
-    Format the extracted content for better readability by:
-    1. Removing HTML tags and scripts
-    2. Cleaning up navigation and header/footer content
-    3. Removing excessive whitespace and newlines
-    4. Ensuring proper paragraph separation
-    5. Cleaning up bullet points and lists
-    """
-    if not text:
-        return ""
-    
-    # Remove HTML tags
-    text = re.sub(r'<[^>]+>', ' ', text)
-    
-    # Remove JavaScript and CSS content
-    text = re.sub(r'<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>', '', text, flags=re.DOTALL)
-    
-    # Remove common navigation patterns (like ========)
-    text = re.sub(r'=+\s*', '\n', text)
-    
-    # Remove empty square brackets (often from removed links)
-    text = re.sub(r'\[\s*]', '', text)
-    
-    # Clean up URLs and email addresses
-    text = re.sub(r'https?://\S+', '', text)  # Remove URLs
-    text = re.sub(r'\S+@\S+', '', text)       # Remove email addresses
-    
-    # Remove common navigation words and phrases
-    navigation_phrases = [
-        'home', 'about', 'contact', 'login', 'logout', 'sign in', 'sign up',
-        'privacy policy', 'terms of service', 'cookie policy', 'advertise',
-        'subscribe', 'follow us', 'share', 'menu', 'search', 'categories',
-        'trending', 'popular', 'latest', 'more', 'read more', 'continue reading'
-    ]
-    for phrase in navigation_phrases:
-        text = re.sub(rf'\b{re.escape(phrase)}\b', '', text, flags=re.IGNORECASE)
-    
-    # Replace multiple spaces with a single space
-    text = re.sub(r'\s+', ' ', text)
-    
-    # Ensure proper sentence spacing
-    text = re.sub(r'([.!?])([A-Z])', r'\1 \2', text)
-    
-    # Replace bullet points with proper formatting
-    text = re.sub(r'\s*[•●▪]\s*', '\n• ', text)
-    
-    # Split into paragraphs and clean each one
-    paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
-    
-    # Filter out very short paragraphs that are likely navigation or ads
-    paragraphs = [p for p in paragraphs if len(p.split()) > 3]
-    
-    # Join paragraphs with double newlines for better readability
-    formatted_text = '\n\n'.join(paragraphs)
-    
-    # Remove any remaining excessive whitespace
-    formatted_text = re.sub(r'\s+', ' ', formatted_text).strip()
-    
-    return formatted_text
-
-# Pydantic models for request/response
-class ContentExtractionRequest(BaseModel):
-    urls: List[str]
-    aliases: List[str]
-    parent_company_name: Optional[str] = "Unknown"
-
-class ContentExtractionResponse(BaseModel):
-    extracted_content: List[Dict[str, Any]]
-    total_articles: int
-    processing_summary: Dict[str, Any]
-
-@app.post("/extract", response_model=ContentExtractionResponse)
-async def extract_content(content_request: ContentExtractionRequest):
-    """
-    Extract content from the provided URLs using the content extraction agent.
+@app.post(
+    "/extract",
+    response_model=ContentExtractionResponse,
+    responses={
+        200: {"description": "Content extracted successfully"},
+        400: {"model": ErrorResponse, "description": "Invalid request parameters"},
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+    tags=["content-extraction"],
+    summary="Extract content from URLs",
+    description="""
+    Extract and clean content from one or more web pages.
     This endpoint processes multiple URLs asynchronously and returns the extracted content.
     """
-    start_time = datetime.utcnow()
+)
+async def extract_content(
+    content_request: ContentExtractionRequest,
+    x_api_key: Optional[str] = None
+) -> ContentExtractionResponse:
+    """
+    Extract content from the provided URLs using advanced AI-powered extraction.
     
+    - **urls**: List of URLs to extract content from
+    - **aliases**: Company name aliases to include in content analysis
+    - **parent_company_name**: (Optional) Parent company name
+    - **language**: (Optional) Language code (default: en)
+    - **include_llm_cleaning**: (Optional) Use LLM for advanced cleaning (default: true)
+    
+    Returns structured content with metadata and processing information.
+    """
     try:
-        # Initialize LLM for content formatting
-        llm = get_llm()
+        logger.info(f"Starting content extraction for {len(content_request.urls)} URLs")
         
-        # Process URLs in batches to avoid overwhelming the system
-        extracted_content = []
-        failed_extractions = 0
+        # Initialize LLM if needed
+        llm = get_llm() if content_request.include_llm_cleaning else None
         
-        for url in content_request.urls:
-            if not url:
-                failed_extractions += 1
-                continue
-                
+        # Process each URL
+        items = []
+        for url_request in content_request.urls:
             try:
-                # Extract content using Jina AI
-                extractor = ImprovedContentExtractionAgent()
-                content = await extractor.extract_content_with_jina(url)
+                # Extract content using the extraction agent
+                result = await extractor.extract_content(url_request.url)
                 
-                # Get content and metadata
-                article_content = content.get("content", "")
-                article_title = content.get("title", "")
-                article_meta = content.get("meta", {})
+                # Format the content
+                formatted_content = format_content(result.get("content", ""))
                 
-                # First, clean with regex
-                cleaned_content = format_content(article_content)
+                # Apply LLM cleaning if enabled
+                if content_request.include_llm_cleaning and llm:
+                    formatted_content = await format_content_with_llm(formatted_content, llm)
                 
-                # Then enhance with LLM for better formatting
-                try:
-                    formatted_content = await format_content_with_llm(cleaned_content, llm)
-                    # Ensure proper newlines in the final output
-                    formatted_content = '\n'.join(line.strip() for line in formatted_content.split('\n') if line.strip())
-                except Exception as e:
-                    logger.error(f"Error in LLM formatting: {str(e)}")
-                    formatted_content = cleaned_content
+                # Create metadata
+                metadata = ContentMetadata(
+                    url=url_request.url,
+                    title=result.get("title"),
+                    author=result.get("author"),
+                    published_date=result.get("published_date"),
+                    language=content_request.language,
+                    word_count=len(formatted_content.split()),
+                    domain=urlparse(str(url_request.url)).netloc,
+                    content_type=url_request.content_type,
+                    extraction_timestamp=datetime.utcnow()
+                )
                 
-                # Create article object
-                article = {
-                    "url": url,
-                    "title": article_title,
-                    "content": formatted_content,
-                    "metadata": {
-                        "source_domain": urlparse(url).netloc,
-                        "extracted_at": datetime.utcnow().isoformat(),
-                        "content_length": len(formatted_content),
-                        "language": article_meta.get("language", "en"),
-                        "extraction_status": "success",
-                        "extraction_metadata": {"extractor": "jina-ai+llm", "version": "2.0"}
-                    }
-                }
-                
-                extracted_content.append(article)
+                # Create response item
+                item = ExtractedContentItem(
+                    content=formatted_content,
+                    metadata=metadata,
+                    raw_text=result.get("content") if url_request.include_raw_text else None,
+                    processing_time_ms=result.get("processing_time_ms")
+                )
+                items.append(item)
                 
             except Exception as e:
-                logger.error(f"Error extracting content from {url}: {str(e)}")
-                failed_extractions += 1
-                
-        # Calculate processing time
-        end_time = datetime.utcnow()
-        duration = (end_time - start_time).total_seconds()
+                logger.error(f"Error extracting content from {url_request.url}: {str(e)}")
+                continue
         
-        # Prepare response
-        response = ContentExtractionResponse(
-            extracted_content=extracted_content,
-            total_articles=len(extracted_content),
-            processing_summary={
-                "total_urls": len(content_request.urls),
-                "successful_extractions": len(extracted_content),
-                "failed_extractions": failed_extractions,
-                "start_time": start_time.isoformat(),
-                "end_time": end_time.isoformat(),
-                "duration_seconds": duration,
-                "parameters": {
-                    "aliases_used": content_request.aliases,
-                    "parent_company": content_request.parent_company_name
-                }
+        # Create processing summary
+        summary = ProcessingSummary(
+            total_urls=len(content_request.urls),
+            successful_extractions=len(items),
+            failed_extractions=len(content_request.urls) - len(items),
+            total_processing_time_seconds=sum(
+                (item.processing_time_ms or 0) / 1000 
+                for item in items
+            ),
+            average_processing_time_seconds=(
+                sum((item.processing_time_ms or 0) for item in items) / 
+                (len(items) * 1000) if items else 0
+            )
+        )
+        
+        return ContentExtractionResponse(
+            items=items,
+            summary=summary,
+            request_metadata={
+                "aliases": content_request.aliases,
+                "parent_company": content_request.parent_company_name,
+                "language": content_request.language
             }
         )
         
-        logger.info(f"✅ Content extraction completed: {len(extracted_content)} articles processed")
-        return response
-        
     except Exception as e:
-        logger.error(f"❌ Error during content extraction: {str(e)}")
+        logger.error(f"Content extraction failed: {str(e)}")
         raise HTTPException(
-            status_code=500, 
-            detail=f"Failed to extract content: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "Failed to extract content",
+                "details": str(e)
+            }
         )
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy", 
-        "service": "content-extraction-api",
-        "agent_type": "jina_content_extractor"
+@app.get(
+    "/health",
+    tags=["health"],
+    summary="Health check",
+    description="Check if the Content Extraction API service is running and healthy",
+    responses={
+        200: {"description": "API is healthy"},
+        500: {"description": "API is not healthy"}
     }
+)
+async def health_check():
+    """
+    Health check endpoint that verifies the Content Extraction API service is running properly.
+    
+    Returns:
+        dict: Status of the API and its components
+    """
+    try:
+        # Add any additional health checks here
+        return {
+            "status": "healthy",
+            "service": "content-extraction-api",
+            "version": "1.0.0",
+            "timestamp": datetime.utcnow().isoformat(),
+            "components": {
+                "extractor": "ready",
+                "llm": "available" if os.getenv("AZURE_OPENAI_API_KEY") else "disabled"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status": "unhealthy",
+                "error": str(e)
+            }
+        )
+
+# Add CORS middleware
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "api.content_extraction_endpoint:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
