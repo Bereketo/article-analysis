@@ -76,7 +76,7 @@ def custom_openapi():
     )
     
     # Add server URL for production
-    server_url = os.getenv("SERVER_URL", "http://localhost:8000")
+    server_url = os.getenv("SERVER_URL", "https://article-analysis-0e4x.onrender.com")
     openapi_schema["servers"] = [{"url": server_url}]
     
     # Merge OpenAPI schemas from mounted apps
@@ -84,9 +84,12 @@ def custom_openapi():
         if hasattr(route, 'app') and hasattr(route.app, 'openapi'):
             sub_openapi = route.app.openapi()
             if sub_openapi and 'paths' in sub_openapi:
+                # Get the mount path properly
+                mount_path = route.path.rstrip('/')
+                
                 for path, methods in sub_openapi['paths'].items():
-                    full_path = f"{route.path_regex.pattern.rstrip('/')}{path}"
-                    full_path = full_path.replace('\\', '').replace('.*', '')
+                    # Combine mount path with sub-app path
+                    full_path = f"{mount_path}{path}"
                     openapi_schema['paths'][full_path] = methods
                 
                 # Merge components (schemas, etc.)
