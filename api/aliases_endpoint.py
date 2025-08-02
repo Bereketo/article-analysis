@@ -1,83 +1,32 @@
-from fastapi import FastAPI, HTTPException, status, Query
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
 import logging
 import asyncio
 from agents.comprehensive_alias_agent import ComprehensiveAliasAgent
 
 # Pydantic models for request/response
 class AliasRequest(BaseModel):
-    """
-    Request model for generating company aliases
-    """
-    company_name: str = Field(
-        ...,
-        description="The company name to generate aliases for",
-        example="Microsoft Corporation"
-    )
-    country: Optional[str] = Field(
-        "India",
-        description="The country where the company is based (for local variations)",
-        example="United States"
-    )
-    include_adverse_queries: Optional[bool] = Field(
-        True,
-        description="Whether to include adverse media search queries in the response"
-    )
-    max_aliases: Optional[int] = Field(
-        10,
-        ge=1,
-        le=50,
-        description="Maximum number of aliases to return"
-    )
+    company_name: str
+    country: Optional[str] = "India"
 
 class AliasResponse(BaseModel):
-    """
-    Response model containing generated company aliases and related information
-    """
-    primary_alias: str = Field(..., description="The primary/canonical name of the company")
-    aliases: List[str] = Field(..., description="List of alternative names and variations")
-    stock_symbols: List[str] = Field(..., description="List of stock exchange symbols")
-    local_variants: List[str] = Field(..., description="Localized name variations")
-    parent_company: str = Field(..., description="Parent company name if applicable")
-    adverse_search_queries: List[str] = Field(..., description="Generated search queries for adverse media")
-    all_aliases: str = Field(..., description="Comma-separated string of all aliases")
-    confidence_score: Optional[float] = Field(
-        None,
-        ge=0.0,
-        le=1.0,
-        description="Confidence score of the alias generation (0.0 to 1.0)"
-    )
-    total_adverse_queries: Optional[int] = Field(
-        None,
-        description="Total number of adverse search queries generated"
-    )
-    metadata: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Additional metadata about the alias generation"
-    )
+    primary_alias: str
+    aliases: List[str]
+    stock_symbols: List[str]
+    local_variants: List[str]
+    parent_company: str
+    adverse_search_queries: List[str]
+    all_aliases: str
+    confidence_score: Optional[float] = None
+    total_adverse_queries: Optional[int] = None
 
-class ErrorResponse(BaseModel):
-    """
-    Standard error response model
-    """
-    error: str = Field(..., description="Error message")
-    details: Optional[Dict[str, Any]] = Field(None, description="Additional error details")
-    status_code: int = Field(..., description="HTTP status code")
-
-app = FastAPI(
-    title="Company Aliases API",
-    description="API for generating company name aliases and variations",
-    version="1.0.0"
-)
-
+app = FastAPI()
 logger = logging.getLogger(__name__)
 
 # Initialize the comprehensive agent
 comprehensive_agent = ComprehensiveAliasAgent()
 
-# Configure CORS
 from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
@@ -89,7 +38,7 @@ app.add_middleware(
 )
 
 @app.post(
-    "/aliases",
+    "/aliases", 
     response_model=AliasResponse,
     responses={
         200: {"description": "Successfully generated company aliases"},
@@ -107,40 +56,28 @@ app.add_middleware(
     - Parent company relationships
     - Adverse media search queries
     """
-)
-async def get_company_aliases(
-    request: AliasRequest,
-    x_api_key: Optional[str] = None
-):
+    )
+async def get_company_aliases(request: AliasRequest):
     """
-    Generate comprehensive company aliases and adverse search queries using advanced AI analysis.
+    Generate comprehensive company aliases and adverse search queries using advanced AI analysis
     
-    - **company_name**: The company name to generate aliases for
-    - **country**: (Optional) Country for localization of name variations
-    - **include_adverse_queries**: (Optional) Whether to include adverse media search queries
-    - **max_aliases**: (Optional) Maximum number of aliases to return (1-50)
-    
-    Returns a structured response with all generated aliases and related information.
+    Args:
+        request: AliasRequest containing company_name and optional country
+        
+    Returns:
+        AliasResponse with comprehensive alias information and extensive adverse search queries
     """
+    
     try:
         logger.info(f"🎯 Processing comprehensive alias request for: {request.company_name}")
-        
-        # Validate input
-        if not request.company_name or len(request.company_name.strip()) < 2:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Company name must be at least 2 characters long"
-            )
         
         # Use the comprehensive alias agent
         result = await comprehensive_agent.generate_comprehensive_aliases(
             company_name=request.company_name,
-            country=request.country,
-            include_adverse_queries=request.include_adverse_queries,
-            max_aliases=request.max_aliases
+            country=request.country
         )
         
-        logger.info(f"✅ Generated {len(result.aliases)} aliases with {len(result.adverse_search_queries)} adverse queries")
+        logger.info(f"✅ Generated comprehensive aliases with {len(result.adverse_search_queries)} adverse queries")
         
         # Structure response
         response = AliasResponse(
@@ -166,39 +103,14 @@ async def get_company_aliases(
             detail=f"Failed to generate comprehensive aliases: {str(e)}"
         )
 
-@app.get(
-    "/health",
-    tags=["health"],
-    summary="Health check",
-    description="Check if the API is running and healthy",
-    responses={
-        200: {"description": "API is healthy"},
-        500: {"description": "API is not healthy"}
-    }
-)
+@app.get("/health")
 async def health_check():
-    """
-    Health check endpoint that verifies the API is running properly.
-    
-    Returns:
-        dict: Status of the API and its components
-    """
-    try:
-        # Add any additional health checks here
-        return {
-            "status": "healthy",
-            "version": "1.0.0",
-            "components": {
-                "database": "connected",
-                "cache": "enabled"
-            }
-        }
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Service is not healthy"
-        )
+    """Health check endpoint"""
+    return {
+        "status": "healthy", 
+        "service": "comprehensive-aliases-api",
+        "agent_type": "comprehensive_alias_agent"
+    }
 
 if __name__ == "__main__":
     import uvicorn

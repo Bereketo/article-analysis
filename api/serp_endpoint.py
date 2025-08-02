@@ -1,120 +1,24 @@
-from fastapi import FastAPI, HTTPException, status, Query, Depends
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, HttpUrl, validator
-from typing import List, Optional, Dict, Any, Union
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
 import logging
 import json
 import os
 import asyncio
 from datetime import datetime
-from enum import Enum
 from agents.improved_content_extraction_agent import ImprovedContentExtractionAgent
 
-# Enums for search parameters
-class SearchEngine(str, Enum):
-    GOOGLE = "google"
-    BING = "bing"
-    DUCKDUCKGO = "duckduckgo"
-
-class ContentType(str, Enum):
-    NEWS = "news"
-    WEB = "web"
-    IMAGES = "images"
-    VIDEOS = "videos"
-
 # Pydantic models for request/response
-class SearchQuery(BaseModel):
-    """Individual search query with optional parameters"""
-    query: str = Field(..., description="The search query string")
-    content_type: Optional[ContentType] = Field(
-        ContentType.NEWS,
-        description="Type of content to search for"
-    )
-    max_results: Optional[int] = Field(
-        10,
-        ge=1,
-        le=50,
-        description="Maximum number of results to return per query"
-    )
-
 class SerpRequest(BaseModel):
-    """Request model for SERP API"""
-    search_queries: List[SearchQuery] = Field(
-        ...,
-        description="List of search queries to execute"
-    )
-    aliases: List[str] = Field(
-        ...,
-        description="Company name aliases to include in the search"
-    )
-    parent_company_name: Optional[str] = Field(
-        "Unknown",
-        description="Name of the parent company for context"
-    )
-    search_engine: Optional[SearchEngine] = Field(
-        SearchEngine.GOOGLE,
-        description="Search engine to use for the query"
-    )
-    language: Optional[str] = Field(
-        "en",
-        description="Language code for search results (e.g., 'en', 'es', 'fr')"
-    )
-    region: Optional[str] = Field(
-        "us",
-        description="Region code for localized results (e.g., 'us', 'uk', 'ca')"
-    )
-    include_duplicates: Optional[bool] = Field(
-        False,
-        description="Whether to include duplicate results across different queries"
-    )
-
-class SearchResultItem(BaseModel):
-    """Individual search result item"""
-    title: str = Field(..., description="Title of the search result")
-    url: HttpUrl = Field(..., description="URL of the search result")
-    snippet: Optional[str] = Field(None, description="Short description/snippet")
-    source: Optional[str] = Field(None, description="Source/domain of the result")
-    published_date: Optional[datetime] = Field(None, description="Publication date")
-    content_type: Optional[ContentType] = Field(None, description="Type of content")
-    relevance_score: Optional[float] = Field(
-        None,
-        ge=0.0,
-        le=1.0,
-        description="Relevance score (0.0 to 1.0)"
-    )
-    metadata: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Additional metadata about the result"
-    )
-
-class ProcessingSummary(BaseModel):
-    """Summary of search processing"""
-    total_queries: int = Field(..., description="Total number of queries executed")
-    total_results: int = Field(..., description="Total number of results found")
-    unique_domains: int = Field(..., description="Number of unique domains in results")
-    processing_time_seconds: float = Field(..., description="Total processing time in seconds")
-    query_metrics: Dict[str, int] = Field(
-        ...,
-        description="Metrics per query (query -> result count)"
-    )
+    search_queries: List[str]
+    aliases: List[str]
+    parent_company_name: Optional[str] = "Unknown"
 
 class SerpResponse(BaseModel):
-    """Response model for SERP API"""
-    results: List[SearchResultItem] = Field(..., description="List of search results")
-    total_results: int = Field(..., description="Total number of results")
-    summary: ProcessingSummary = Field(..., description="Processing summary")
-    search_metadata: Dict[str, Any] = Field(
-        ...,
-        description="Metadata about the search execution"
-    )
+    results_data: Dict[str, Any]
+    total_articles: int
+    processing_summary: Dict[str, Any]
 
-class ErrorResponse(BaseModel):
-    """Standard error response model"""
-    error: str = Field(..., description="Error message")
-    details: Optional[Dict[str, Any]] = Field(None, description="Additional error details")
-    status_code: int = Field(..., description="HTTP status code")
-
-# Initialize FastAPI app with metadata
 app = FastAPI(
     title="SERP API",
     description="""
@@ -123,12 +27,10 @@ app = FastAPI(
     """,
     version="1.0.0"
 )
-
-# Configure logging
 logger = logging.getLogger(__name__)
 
 @app.post(
-    "/search",
+    "/search", 
     response_model=SerpResponse,
     responses={
         200: {"description": "Search completed successfully"},
@@ -142,38 +44,18 @@ logger = logging.getLogger(__name__)
     Execute a search query across multiple search engines and content types.
     Returns structured search results with metadata and processing summary.
     """
-)
-async def search_content(
-    request: SerpRequest,
-    x_api_key: Optional[str] = None,
-    x_request_id: Optional[str] = None
-):
+    )
+async def search_content(request: SerpRequest):
     """
-    Perform a web search using the specified queries and parameters.
-    
-    - **search_queries**: List of search queries with parameters
-    - **aliases**: Company name aliases to include in search
-    - **parent_company_name**: (Optional) Parent company name
-    - **search_engine**: (Optional) Search engine to use (default: google)
-    - **language**: (Optional) Language code (default: en)
-    - **region**: (Optional) Region code (default: us)
-    - **include_duplicates**: (Optional) Include duplicate results (default: false)
-    
-    Returns structured search results with metadata and processing information.
+    Search and extract content using the existing ImprovedContentExtractionAgent
     """
+    
     try:
         logger.info(f"🔍 Starting content search with {len(request.search_queries)} queries")
         
-        # Validate input
-        if not request.search_queries:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="At least one search query is required"
-            )
-        
-        # Initialize the content extraction agent with request parameters
+        # Initialize the content extraction agent
         extractor = ImprovedContentExtractionAgent(
-            num_results=request.search_queries[0].max_results if request.search_queries else 10,
+            num_results=10,
             concurrent_limit=24
         )
         
@@ -323,62 +205,15 @@ async def search_content(
             detail=f"Failed to perform content search: {str(e)}"
         )
 
-@app.get(
-    "/health",
-    tags=["health"],
-    summary="Health check",
-    description="Check if the SERP API service is running and healthy",
-    responses={
-        200: {"description": "API is healthy"},
-        500: {"description": "API is not healthy"}
-    }
-)
+@app.get("/health")
 async def health_check():
-    """
-    Health check endpoint that verifies the SERP API service is running properly.
-    
-    Returns:
-        dict: Status of the API and its components
-    """
-    try:
-        # Add any additional health checks here
-        return {
-            "status": "healthy",
-            "service": "serp-api",
-            "version": "1.0.0",
-            "timestamp": datetime.utcnow().isoformat(),
-            "components": {
-                "search_engine": "connected",
-                "content_extractor": "ready"
-            }
-        }
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "status": "unhealthy",
-                "error": str(e)
-            }
-        )
-
-# Add CORS middleware
-from fastapi.middleware.cors import CORSMiddleware
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    """Health check endpoint"""
+    return {
+        "status": "healthy", 
+        "service": "serp-content-search-api",
+        "agent_type": "improved_content_extraction_agent"
+    }
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "api.serp_endpoint:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8000)
