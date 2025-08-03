@@ -15,5 +15,9 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-# Keep app for backward compatibility but use router for routes
-app = APIRouter()
+@router.get("/health")
+async def health_check():
+    return {
+        "status": "healthy", 
+        "service": "content-extraction-api"
+    }

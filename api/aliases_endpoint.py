@@ -31,25 +31,12 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-# Keep app for backward compatibility but use router for routes
-app = APIRouter()
-
 logger = logging.getLogger(__name__)
 
 # Initialize the comprehensive agent
 comprehensive_agent = ComprehensiveAliasAgent()
 
-from fastapi.middleware.cors import CORSMiddleware
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.post(
+@router.post(
     "/aliases", 
     response_model=AliasResponse,
     responses={
@@ -57,56 +44,21 @@ app.add_middleware(
         400: {"model": ErrorResponse, "description": "Invalid request parameters"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
-    tags=["aliases"],
     summary="Generate company aliases",
     description="""
     Generate comprehensive company aliases, variations, and adverse media search queries.
-    This endpoint uses advanced AI to analyze the company name and generate:
-    - Common name variations
-    - Localized name variants
-    - Stock symbols
-    - Parent company relationships
-    - Adverse media search queries
     """
-    )
+)
 async def get_company_aliases(request: AliasRequest):
-    """
-    Generate comprehensive company aliases and adverse search queries using advanced AI analysis
-    
-    Args:
-        request: AliasRequest containing company_name and optional country
-        
-    Returns:
-        AliasResponse with comprehensive alias information and extensive adverse search queries
-    """
-    
     try:
         logger.info(f"🎯 Processing comprehensive alias request for: {request.company_name}")
         
-        # Use the comprehensive alias agent
         result = await comprehensive_agent.generate_comprehensive_aliases(
             company_name=request.company_name,
             country=request.country
         )
         
-        logger.info(f"✅ Generated comprehensive aliases with {len(result.adverse_search_queries)} adverse queries")
-        
-        # Structure response
-        response = AliasResponse(
-            primary_alias=result.primary_alias,
-            aliases=result.aliases,
-            stock_symbols=result.stock_symbols,
-            local_variants=result.local_variants,
-            parent_company=result.parent_company,
-            adverse_search_queries=result.adverse_search_queries,
-            all_aliases=result.all_aliases,
-            confidence_score=result.confidence_score,
-            total_adverse_queries=len(result.adverse_search_queries)
-        )
-        
-        logger.info(f"📊 Response: {len(response.aliases)} aliases, {len(response.adverse_search_queries)} adverse queries, confidence: {response.confidence_score}")
-        
-        return response
+        return result
         
     except Exception as e:
         logger.error(f"❌ Error processing comprehensive alias request: {str(e)}")
@@ -115,9 +67,8 @@ async def get_company_aliases(request: AliasRequest):
             detail=f"Failed to generate comprehensive aliases: {str(e)}"
         )
 
-@app.get("/health")
+@router.get("/health")
 async def health_check():
-    """Health check endpoint"""
     return {
         "status": "healthy", 
         "service": "comprehensive-aliases-api",
@@ -126,4 +77,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(router, host="0.0.0.0", port=8000)

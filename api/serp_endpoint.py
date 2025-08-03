@@ -29,12 +29,9 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-# Keep app for backward compatibility but use router for routes
-app = APIRouter()
-
 logger = logging.getLogger(__name__)
 
-@app.post(
+@router.post(
     "/search", 
     response_model=SerpResponse,
     responses={
@@ -43,165 +40,26 @@ logger = logging.getLogger(__name__)
         429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
-    tags=["search"],
     summary="Perform a web search",
     description="""
     Execute a search query across multiple search engines and content types.
-    Returns structured search results with metadata and processing summary.
     """
-    )
+)
 async def search_content(request: SerpRequest):
-    """
-    Search and extract content using the existing ImprovedContentExtractionAgent
-    """
-    
     try:
         logger.info(f"🔍 Starting content search with {len(request.search_queries)} queries")
         
-        # Initialize the content extraction agent
         extractor = ImprovedContentExtractionAgent(
             num_results=10,
             concurrent_limit=24
         )
         
-        # First, get just the search results
         search_results = extractor.extract_content(
             queries=request.search_queries,
             num_results=10
         )
         
-        # Save search results to a JSON file
-        os.makedirs("search_results", exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        search_results_file = f"search_results/search_results_{timestamp}.json"
-        
-        # Initialize Azure OpenAI LLM for title analysis
-        from langchain_openai import AzureChatOpenAI
-        from langchain.schema import HumanMessage, SystemMessage
-        
-        llm = AzureChatOpenAI(
-            openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
-            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-            azure_deployment="gpt-4.1",
-            openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-            temperature=0
-        )
-        
-        # System message to guide the LLM's analysis
-        company_name = request.parent_company_name or "the company"
-        system_prompt = f"""
-        You are an AI assistant that analyzes news article titles to determine if they are specifically about {company_name} and relevant to adverse events or negative news.
-        
-        STRICT RULES:
-        1. The article must be specifically about {company_name} or its direct subsidiaries
-        2. The article must discuss actual adverse events, not just mention the company name
-        3. Exclude articles that only mention the company in passing or in a list
-        4. Exclude articles about other companies with similar names
-        5. Exclude articles that are about the company's competitors or unrelated businesses
-        
-        Focus on these types of risks:
-        - Financial (fraud, accounting issues, losses)
-        - Legal (lawsuits, regulatory actions, fines)
-        - Reputational (scandals, controversies)
-        - Operational (safety incidents, major failures)
-        - Regulatory (compliance violations, sanctions)
-        
-        Respond with a JSON object containing:
-        {{
-            "is_relevant": boolean,  // true only if the title is specifically about {company_name} and contains adverse content
-            "reason": string,        // brief explanation of your decision
-            "risk_category": string  // 'financial', 'legal', 'reputational', 'regulatory', 'operational', or 'none' if not relevant
-        }}
-        """
-        
-        # Prepare search results for JSON serialization
-        serializable_results = []
-        
-        async def analyze_title(title):
-            try:
-                messages = [
-                    SystemMessage(content=system_prompt),
-                    HumanMessage(content=f"Analyze this news title: {title}")
-                ]
-                response = await llm.ainvoke(messages)
-                return json.loads(response.content)
-            except Exception as e:
-                logger.error(f"Error analyzing title '{title}': {str(e)}")
-                return {"is_relevant": False, "reason": "Error in analysis", "risk_category": "none"}
-        
-        # Process titles in batches for better performance
-        batch_size = 10
-        for i in range(0, len(search_results), batch_size):
-            batch = search_results[i:i + batch_size]
-            
-            # Analyze all titles in the current batch
-            analysis_results = await asyncio.gather(
-                *[analyze_title(result.get('title', '')) for result in batch]
-            )
-            
-            # Process results
-            for result, analysis in zip(batch, analysis_results):
-                if analysis.get('is_relevant', False):
-                    serializable_result = {
-                        'title': result.get('title', ''),
-                        'link': result.get('link', ''),
-                        'snippet': result.get('snippet', ''),
-                        'source': result.get('source', '') if isinstance(result.get('source'), str) 
-                                else result.get('source', {}).get('name', ''),
-                        'date': result.get('date', ''),
-                        'search_engine': result.get('search_engine', 'unknown'),
-                        'source_query': result.get('source_query', ''),
-                        'search_period': result.get('search_period', {}),
-                        'relevance_analysis': {
-                            'is_relevant': analysis.get('is_relevant', False),
-                            'reason': analysis.get('reason', ''),
-                            'risk_category': analysis.get('risk_category', 'none')
-                        }
-                    }
-                    serializable_results.append(serializable_result)
-                    logger.info(f"Included article: {result.get('title')} - {analysis.get('risk_category')}")
-                else:
-                    logger.debug(f"Excluding article - Not relevant: {result.get('title')}")
-                    
-            # Small delay between batches to avoid rate limiting
-            if i + batch_size < len(search_results):
-                await asyncio.sleep(1)
-        
-        # Save to JSON file
-        with open(search_results_file, 'w', encoding='utf-8') as f:
-            json.dump({
-                'search_queries': request.search_queries,
-                'aliases': request.aliases,
-                'parent_company_name': request.parent_company_name,
-                'timestamp': datetime.now().isoformat(),
-                'result_count': len(serializable_results),
-                'results': serializable_results
-            }, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"✅ Saved {len(serializable_results)} search results to {search_results_file}")
-        
-        # Calculate total articles
-        total_articles = len(serializable_results)
-        
-        # Create processing summary
-        processing_summary = {
-            "queries_processed": len(request.search_queries),
-            "aliases_used": len(request.aliases),
-            "parent_company": request.parent_company_name,
-            "total_articles_found": total_articles
-        }
-        
-        response = SerpResponse(
-            results_data={
-                "search_results": serializable_results
-            },
-            total_articles=total_articles,
-            processing_summary=processing_summary
-        )
-        
-        logger.info(f"✅ Content search completed: {total_articles} articles found")
-        
-        return response
+        return search_results
         
     except Exception as e:
         logger.error(f"❌ Error during content search: {str(e)}")
@@ -210,15 +68,10 @@ async def search_content(request: SerpRequest):
             detail=f"Failed to perform content search: {str(e)}"
         )
 
-@app.get("/health")
+@router.get("/health")
 async def health_check():
-    """Health check endpoint"""
     return {
         "status": "healthy", 
         "service": "serp-content-search-api",
         "agent_type": "improved_content_extraction_agent"
     }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
