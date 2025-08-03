@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import logging
@@ -23,11 +23,15 @@ class ErrorResponse(BaseModel):
     detail: str
     error_code: Optional[str] = None
 
-app = FastAPI(
-    title="SERP API",
-    description="Search Engine Results Page (SERP) API for performing web searches and extracting content.",
-    version="1.0.0"
+router = APIRouter(
+    prefix="/api/serp",
+    tags=["search"],
+    responses={404: {"description": "Not found"}},
 )
+
+# Keep app for backward compatibility but use router for routes
+app = APIRouter()
+
 logger = logging.getLogger(__name__)
 
 @app.post(

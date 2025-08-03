@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.aliases_endpoint import app as aliases_app
-from api.serp_endpoint import app as serp_app
-from api.content_extraction_endpoint import app as content_extraction_app
+from api.aliases_endpoint import router as aliases_router
+from api.serp_endpoint import router as serp_router
+from api.content_extraction_endpoint import router as content_router
 import os
 
 # Main FastAPI application
@@ -33,15 +33,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers instead of mounting apps
-from api.aliases_endpoint import app as aliases_router
-from api.serp_endpoint import app as serp_router  
-from api.content_extraction_endpoint import app as content_router
-
-# Include the routers with prefixes
-app.mount("/api/aliases", aliases_router)
-app.mount("/api/serp", serp_router)
-app.mount("/api/content-extraction", content_router)
+# Include the routers
+app.include_router(aliases_router)
+app.include_router(serp_router)
+app.include_router(content_router)
 
 # Root endpoint
 @app.get("/", tags=["root"])

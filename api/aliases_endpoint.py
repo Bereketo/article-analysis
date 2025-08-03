@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
@@ -25,7 +25,15 @@ class ErrorResponse(BaseModel):
     detail: str
     error_code: Optional[str] = None
 
-app = FastAPI()
+router = APIRouter(
+    prefix="/api/aliases",
+    tags=["aliases"],
+    responses={404: {"description": "Not found"}},
+)
+
+# Keep app for backward compatibility but use router for routes
+app = APIRouter()
+
 logger = logging.getLogger(__name__)
 
 # Initialize the comprehensive agent
