@@ -46,15 +46,15 @@ async def root():
         "version": "1.0.0",
         "docs": "/docs",
         "endpoints": {
-            "aliases": "/api/aliases/aliases",
+            "aliases": "/api/cdd/aliases",
             "aliases_health": "/api/aliases/health",
-            "serp_search": "/api/serp/search", 
+            "serp_search": "/api/cdd/search", 
             "serp_health": "/api/serp/health",
-            "content_extraction": "/api/content-extraction/extract",
+            "content_extraction": "/api/cdd/extract",
             "content_extraction_health": "/api/content-extraction/health"
         }
     }
-
+ 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
