@@ -24,7 +24,7 @@ class ErrorResponse(BaseModel):
     error_code: Optional[str] = None
 
 router = APIRouter(
-    prefix="/api/serp",
+    prefix="/api/cdd",
     tags=["search"],
     responses={404: {"description": "Not found"}},
 )
