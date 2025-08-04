@@ -1,14 +1,70 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 import logging
 import asyncio
 from agents.comprehensive_alias_agent import ComprehensiveAliasAgent
 
 # Pydantic models for request/response
+
+logger = logging.getLogger(__name__)
+
 class AliasRequest(BaseModel):
     company_name: str
     country: Optional[str] = "India"
+
+async def _correct_spelling_and_validate(company_name: str, country: str) -> Dict[str, str]:
+    """Correct spelling errors in company name and country using LLM"""
+    
+    correction_prompt = f"""
+    You are a spelling correction assistant for corporate names and countries.
+    
+    Please correct any spelling errors in the following:
+    Company Name: "{company_name}"
+    Country: "{country}"
+    
+    Return the corrected versions in JSON format:
+    {{
+        "corrected_company_name": "Corrected Company Name",
+        "corrected_country": "Corrected Country"
+    }}
+    
+    Rules:
+    - Fix obvious spelling mistakes
+    - Standardize company suffixes (Ltd, Limited, Inc, etc.)
+    - Use proper country names (not abbreviations)
+    """
+    print("BEING PROCESSED")
+    try:
+        from langchain_openai import AzureChatOpenAI
+        from langchain.schema import HumanMessage
+        import json
+        import re
+        import os
+        
+        llm = AzureChatOpenAI(
+            openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
+            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+            azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
+            temperature=0.1
+        )
+        
+        response = await llm.ainvoke([HumanMessage(content=correction_prompt)])
+        
+        # Extract JSON from response
+        json_match = re.search(r'\{.*\}', response.content, re.DOTALL)
+        if json_match:
+            corrections = json.loads(json_match.group())
+            return {
+                "company_name": corrections.get("corrected_company_name", company_name),
+                "country": corrections.get("corrected_country", country)
+            }
+    except Exception as e:
+        logger.warning(f"Spelling correction failed: {e}")
+    
+    # Fallback to original if correction fails
+    return {"company_name": company_name, "country": country}
 
 class AliasResponse(BaseModel):
     primary_alias: str
@@ -51,13 +107,20 @@ comprehensive_agent = ComprehensiveAliasAgent()
 )
 async def get_company_aliases(request: AliasRequest):
     try:
-        logger.info(f"🎯 Processing comprehensive alias request for: {request.company_name}")
+        logger.info(f"🎯 Processing comprehensive alias request")
         
+        # Correct spelling errors
+        corrections = await _correct_spelling_and_validate(request.company_name, request.country)
+        corrected_company = corrections["company_name"]
+        corrected_country = corrections["country"]
+        if corrected_company != request.company_name or corrected_country != request.country:
+            logger.info(f"📝 Spelling corrections applied: '{request.company_name}' → '{corrected_company}', '{request.country}' → '{corrected_country}'")
+
         result = await comprehensive_agent.generate_comprehensive_aliases(
-            company_name=request.company_name,
-            country=request.country
+            company_name=corrected_company,
+            country=corrected_country
         )
-        
+        print(result)
         return result
         
     except Exception as e:
@@ -67,7 +130,7 @@ async def get_company_aliases(request: AliasRequest):
             detail=f"Failed to generate comprehensive aliases: {str(e)}"
         )
 
-@router.get("/health")
+@router.get("/aliases/health")
 async def health_check():
     return {
         "status": "healthy", 
