@@ -5,14 +5,23 @@ import logging
 import json
 import os
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from agents.improved_content_extraction_agent import ImprovedContentExtractionAgent
 
 # Pydantic models for request/response
 class SerpRequest(BaseModel):
-    search_queries: List[str]
+    primary_alias: str
     aliases: List[str]
-    parent_company_name: Optional[str] = "Unknown"
+    stock_symbols: List[str]
+    local_variants: List[str]
+    parent_company: str
+    adverse_search_queries: List[str]
+    all_aliases: str
+    confidence_score: Optional[float] = None
+    total_adverse_queries: Optional[int] = None
+    start_date: Optional[str] = None  # Format: "YYYY-MM-DD"
+    end_date: Optional[str] = None    # Format: "YYYY-MM-DD"
+    time_window_days: Optional[int] = None  # Alternative: last N days
 
 class SerpResponse(BaseModel):
     results_data: Dict[str, Any]
@@ -47,30 +56,37 @@ logger = logging.getLogger(__name__)
 )
 async def search_content(request: SerpRequest):
     try:
-        logger.info(f"🔍 Starting content search with {len(request.search_queries)} queries")
+        logger.info(f"🔍 Starting content search with {len(request.adverse_search_queries)} queries")
         
         # Validate search queries
-        if not request.search_queries:
+        if not request.adverse_search_queries:
             raise HTTPException(
                 status_code=422,
                 detail="Search queries list cannot be empty"
             )
         
+        # Process time window
+        start_date_str, end_date_str = _process_time_window(request.start_date, request.end_date, request.time_window_days)
+        
+        # Convert string dates to datetime objects for the agent
+        start_date = None
+        end_date = None
+        if start_date_str and end_date_str:
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+            logger.info(f"📅 Search time window: {start_date_str} to {end_date_str}")
+
         extractor = ImprovedContentExtractionAgent(
             num_results=10,
             concurrent_limit=24
         )
         
-        """# Use the proper method that returns structured data
-        search_results = await extractor.search_and_extract_content(
-            search_queries=request.search_queries,
-            aliases=request.aliases,
-            parent_company_name=request.parent_company_name
-        )"""
         
-                # First, get just the search results
+        # First, get just the search results
         search_results = extractor.extract_content(
-            queries=request.search_queries,
+            queries=request.adverse_search_queries,
+            start_date=start_date,  # Now datetime object
+            end_date=end_date,      # Now datetime object
             num_results=10
         )
 
@@ -93,7 +109,7 @@ async def search_content(request: SerpRequest):
         )
         
         # System message to guide the LLM's analysis
-        company_name = request.parent_company_name or "the company"
+        company_name = request.parent_company or "the company"
         system_prompt = f"""
         You are an AI assistant that analyzes news article titles to determine if they are specifically about {company_name} and relevant to adverse events or negative news.
         
@@ -175,9 +191,9 @@ async def search_content(request: SerpRequest):
         # Save to JSON file
         with open(search_results_file, 'w', encoding='utf-8') as f:
             json.dump({
-                'search_queries': request.search_queries,
+                'search_queries': request.adverse_search_queries,
                 'aliases': request.aliases,
-                'parent_company_name': request.parent_company_name,
+                'parent_company_name': request.parent_company,
                 'timestamp': datetime.now().isoformat(),
                 'result_count': len(serializable_results),
                 'results': serializable_results
@@ -190,9 +206,9 @@ async def search_content(request: SerpRequest):
         
         # Create processing summary
         processing_summary = {
-            "queries_processed": len(request.search_queries),
+            "queries_processed": len(request.adverse_search_queries),
             "aliases_used": len(request.aliases),
-            "parent_company": request.parent_company_name,
+            "parent_company": request.parent_company,
             "total_articles_found": total_articles
         }
 
@@ -219,7 +235,27 @@ async def search_content(request: SerpRequest):
             detail=f"Failed to perform content search: {str(e)}"
         )
 
-@router.get("/health")
+def _process_time_window(start_date: str, end_date: str, time_window_days: int) -> tuple:
+    """Process time window parameters and return start/end dates"""
+    
+    try:
+        if start_date and end_date:
+            # Use provided date range
+            return start_date, end_date
+        elif time_window_days:
+            # Calculate date range from days
+            end_date = datetime.now().strftime("%Y-%m-%d")
+            start_date = (datetime.now() - timedelta(days=time_window_days)).strftime("%Y-%m-%d")
+            return start_date, end_date
+        else:
+            # No time filter
+            return None, None
+    except Exception as e:
+        logger.warning(f"Time window processing failed: {e}")
+        return None, None
+
+
+@router.get("/serp/health")
 async def health_check():
     return {
         "status": "healthy", 
