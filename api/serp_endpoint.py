@@ -23,10 +23,16 @@ class SerpRequest(BaseModel):
     end_date: Optional[str] = None    # Format: "YYYY-MM-DD"
     time_window_days: Optional[int] = None  # Alternative: last N days
 
+class SimplifiedSerpData(BaseModel):
+    urls: List[str]
+    aliases: List[str]
+    parent_company_name: str
+
 class SerpResponse(BaseModel):
     results_data: Dict[str, Any]
     total_articles: int
     processing_summary: Dict[str, Any]
+    simplified_data: SimplifiedSerpData
 
 class ErrorResponse(BaseModel):
     detail: str
@@ -213,14 +219,22 @@ async def search_content(request: SerpRequest):
         }
 
 
-
+        # Extract URLs from search results
+        extracted_urls = [result.get('link', '') for result in serializable_results if result.get('link')]
+        
         # Format the response properly
         response = SerpResponse(
+            simplified_data=SimplifiedSerpData(
+                urls=extracted_urls,
+                aliases=request.aliases,
+                parent_company_name=request.parent_company
+            ),
             results_data={
                 "search_results": serializable_results
             },
             total_articles=total_articles,
             processing_summary=processing_summary
+
         )
         
         logger.info(f"✅ Search completed. Found {total_articles} articles")
