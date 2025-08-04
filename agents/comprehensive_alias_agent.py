@@ -119,7 +119,7 @@ Research Results:
 Extract information for "{company_name}" specifically and return in this JSON format:
 {{
     "primary_alias": "{company_name}",
-    "aliases": ["{company_name}", "variations of the name", "short forms", "abbreviations"],
+    "aliases": ["{company_name}", "variations of the name", "short forms", "abbreviations",  "old or former company names"],
     "stock_symbols": ["SYMBOL"],
     "local_variants": ["local language names", "regional names"],
     "parent_company": "Parent Company Name",
@@ -128,6 +128,7 @@ Extract information for "{company_name}" specifically and return in this JSON fo
 
 IMPORTANT INSTRUCTIONS:
 - Only extract information about "{company_name}", not other companies
+- For aliases: Include all possible variations including short forms, abbreviations, and any former or old company names
 - For stock_symbols: Look for NSE/BSE ticker symbols (usually 3-10 characters, letters only)
 - Stock symbols are like "ADANIENT", "RELIANCE", "TCS", "INFY" - NOT numbers
 - If no stock symbol found, return empty array []
@@ -249,9 +250,6 @@ IMPORTANT INSTRUCTIONS:
         elif "infosys" in company_lower:
             local_variants.extend(["Infosys India", "Infosys Technologies"])
         
-        # Add India suffix if not present
-        if "India" not in company_name and not any("India" in variant for variant in local_variants):
-            local_variants.append(f"{company_name} India")
         
         return list(set(local_variants))
     
