@@ -19,6 +19,7 @@ class SimplifiedExtractionData(BaseModel):
     urls: List[str]
     aliases: List[str]
     parent_company_name: str
+    content: str
 
 class ContentExtractionResponse(BaseModel):
     extracted_content: List[Dict[str, Any]]
@@ -150,16 +151,22 @@ async def extract_content(request: ContentExtractionRequest):
             }
             search_results.append(search_result)
         
-        # Extract and analyze content
-        processed_results = await extractor.extract_and_analyze_parallel(
-            search_results, 
-            request.aliases, 
-            request.parent_company_name
-        )
+        # Extract content using Jina AI only (no analysis)
+        extracted_results = []
+        for search_result in search_results:
+            url = search_result["link"]
+            jina_content = await extractor.extract_content_with_jina(url)
+            
+            result = {
+                "link": url,
+                "jina_content": jina_content,
+                "extraction_status": "success" if jina_content.get("content") else "no_content"
+            }
+            extracted_results.append(result)
         
         # Format response to match the desired structure
         extracted_content = []
-        for result in processed_results:
+        for result in extracted_results:
             jina_content = result.get("jina_content", {})
             raw_content = jina_content.get("content", "")
 
@@ -191,8 +198,8 @@ async def extract_content(request: ContentExtractionRequest):
         # Create processing summary
         processing_summary = {
             "total_urls_requested": len(request.urls),
-            "successful_extractions": len([r for r in processed_results if r.get("extraction_status") == "success"]),
-            "failed_extractions": len([r for r in processed_results if r.get("extraction_status") != "success"]),
+            "successful_extractions": len([r for r in extracted_results if r.get("extraction_status") == "success"]),
+            "failed_extractions": len([r for r in extracted_results if r.get("extraction_status") != "success"]),
             "processing_time": datetime.now().isoformat(),
             "aliases_used": request.aliases,
             "parent_company": request.parent_company_name
@@ -205,7 +212,8 @@ async def extract_content(request: ContentExtractionRequest):
             simplified_data=SimplifiedExtractionData(
                 urls=request.urls,
                 aliases=request.aliases,
-                parent_company_name=request.parent_company_name
+                parent_company_name=request.parent_company_name,
+                content=cleaned_content if extracted_content else ""
             )
         )
         
