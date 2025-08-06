@@ -17,6 +17,7 @@ class ContentExtractionRequest(BaseModel):
 
 class SimplifiedExtractionData(BaseModel):
     urls: List[str]
+    content: str
     aliases: List[str]
     parent_company_name: str
 
@@ -204,6 +205,7 @@ async def extract_content(request: ContentExtractionRequest):
             processing_summary=processing_summary,
             simplified_data=SimplifiedExtractionData(
                 urls=request.urls,
+                content=cleaned_content,
                 aliases=request.aliases,
                 parent_company_name=request.parent_company_name
             )
