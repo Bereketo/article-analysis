@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.aliases_endpoint import router as aliases_router
 from api.serp_endpoint import router as serp_router
 from api.content_extraction_endpoint import router as content_router
+from api.article_analysis_endpoint import router as article_router
 import os
 
 # Main FastAPI application
@@ -37,6 +38,7 @@ app.add_middleware(
 app.include_router(aliases_router)
 app.include_router(serp_router)
 app.include_router(content_router)
+app.include_router(article_router)
 
 # Root endpoint
 @app.get("/", tags=["root"])
@@ -51,7 +53,9 @@ async def root():
             "serp_search": "/api/cdd/search", 
             "serp_health": "/api/serp/health",
             "content_extraction": "/api/cdd/extract",
-            "content_extraction_health": "/api/content-extraction/health"
+            "content_extraction_health": "/api/content-extraction/health",
+            "article_analysis": "/api/cdd/article-analysis",
+            "article_analysis_health": "/api/article-analysis/health"
         }
     }
  
