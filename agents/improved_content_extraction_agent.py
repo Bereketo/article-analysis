@@ -326,125 +326,111 @@ class ImprovedContentExtractionAgent:
 
     def _create_analysis_prompt(self, content: str, url: str, aliases: List[str], parent_company_name: str) -> List:
         """Create analysis prompt for a single article"""
-        system_prompt = f"""You are an expert risk analyst. Your task is to analyze the given article content about the specified/target company aliases {aliases}. Determine whether the article is adverse, positive, or neutral for the company of interest, and extract structured metadata based on the schema below.
+        system_prompt = f"""You are assisting in risk analysis for media articles. The goal is to assess the relevance and tone of an article related to the company aliases {aliases} and  its parent company {parent_company_name}. Follow the guidelines below to evaluate content and return structured metadata when applicable.
 
-⸻
+        ⸻
 
-🔍 Filtering Irrelevant Content
+        🔍 Relevance Assessment
 
-Begin by assessing whether the article is actually about Target Company {aliases} or Parent Company {parent_company_name}:
+        Determine if the article primarily concerns {aliases} or is materially related to {parent_company_name}:
 
-    • If the article is only about {parent_company_name} and does not mention {aliases} or show any impact, set:
-        • is_filter = true
-        • is_filter_reason = "Article is only about the parent company with no mention or consequence for the subsidiary/target company."
-        • Return: An empty list []
+            • If the article solely discusses {parent_company_name} without referencing or impacting {aliases}, mark:
+                • is_filter = true
+                • is_filter_reason = "Focus is only on the parent company; no relevance to the target company."
+                • Output: []
 
-    • If the article mentions both {parent_company_name} and {aliases}, but there is no correlation or impact between them (i.e., the parent and subsidiary are discussed independently and the parent company's events do not affect the subsidiary), set:
-        • is_filter = true
-        • is_filter_reason = "Article discusses both parent and subsidiary, but there is no connection or impact between them."
-        • Return: An empty list []
+            • If both {parent_company_name} and {aliases} are mentioned but without meaningful connection, mark:
+                • is_filter = true
+                • is_filter_reason = "Mentions are independent; no clear relationship or effect."
+                • Output: []
 
-    • If the article discusses both {parent_company_name} and {aliases}, and there is a correlation or impact (i.e., events affecting the parent also affect the subsidiary, or vice versa), or if the article is about {aliases} directly, then the article is relevant and should be kept.
+            • If a clear connection or impact is evident between the entities, or if the article focuses on {aliases}, consider it relevant.
 
-    • Exclude the article in the following cases:
-        - {aliases} is mentioned only briefly, in a list, or for background — not as a focus or impacted entity.
-        - The article is centered on another company, industry trend, or topic, with no clear consequence for {aliases}.
-        - Mentions of {aliases} are name-drops or historical references, unrelated to the current event or issue.
+            • Common exclusions:
+                - Brief mention of {aliases} with no consequence
+                - Articles centered on unrelated topics or companies
+                - Background-only or historical mentions without current context
 
-    • If the article is about {aliases} or {parent_company_name} but is general in nature (for example, it only provides background information, company profile, or general description, and does not discuss any specific event, news, development, or incident), set:
-        • is_filter = true
-        • is_filter_reason = "Article is general and does not discuss any specific event or news related to the company."
-        • Return: An empty list []
+            • If content is general (e.g., background info or company overview) with no newsworthy event or development, mark:
+                • is_filter = true
+                • is_filter_reason = "General context; no specific development or incident."
+                • Output: []
 
-    • Include the article if:
-        - The article is primarily about {aliases}, including its operations, legal matters, strategy, leadership, market actions, or controversies.
-        - {parent_company_name} or a sibling company is discussed, but the content shows that the development materially affects {aliases}, such as:
-            - Shared legal or regulatory action
-            - Financial interlinkage, shared debt, or reputational damage
-            - Operational dependency, shared infrastructure, or board-level decisions
-            - There is clear downstream impact on {aliases} even if it's not the central subject — e.g., indirect exposure through supply chain, funding, investor response, or sector-wide regulation that names {aliases}
+            • Consider an article relevant if:
+                - It centers on {aliases}' activities (legal, strategic, operational, reputational)
+                - It involves {parent_company_name} or a related entity in a way that has clear implications for {aliases}
 
-⸻
+        ⸻
 
-🧠 Step-by-Step Analysis (Only if Article is Relevant)
+        🧠 Content Analysis (For Relevant Articles Only)
 
-⸻
+        ⸻
 
-✅ Step 1: Adverse Event Detection
+        ✅ Step 1: Detect Adverse Events
 
-Mark the following flags as true only if the event negatively affects the company:
-    • Evaluate narrative context and outcome, not just presence of adverse keywords.
-    • Consider financial loss, regulatory penalties, public backlash, product failure, key departures, etc.
+        Identify negative developments only if they demonstrably affect the company (e.g., financial loss, penalties, backlash, failures, key exits).
 
-⸻
+        ⸻
 
-✅ Step 2: Determine Tone of the Article
+        ✅ Step 2: Assess Tone
 
-Assign is_adverse as one of the following:
-    • "Negative":
-        • If any adverse event is detected, or
-        • If the overall tone is critical, damaging, or unfavorable
-    • "Positive":
-        • If the article reflects good news such as:
-            • Growth, hiring, expansion, new product, strategic partnerships, favorable rulings, successful milestones
-    • "Neutral":
-        • If the article is informational only, or lacks any notable positive or negative tone
+        Assign one of the following to `is_adverse`:
+            • "Negative" – if harm or critical tone is present
+            • "Positive" – if the article reflects growth, progress, or favorable developments
+            • "Neutral" – if the article is informational and balanced
 
-Also include:
-    • is_adverse_reason: A concise justification for the assigned tone
+        Provide a concise explanation under `is_adverse_reason`.
 
-⸻
+        ⸻
 
-✅ Step 3: Risk Metadata (If is_adverse = "Negative")
+        ✅ Step 3: Risk Metadata (If is_adverse = "Negative")
 
-If the article is negative, extract structured risk data:
-    • risk_explanation: Why the article presents a risk to the company
-    • risk_snippet: Direct quote or short phrase from the article that highlights the risk
-    • risk_category: One of the following:
-        • "Legal", "Financial", "Compliance", "Operational", "Reputational", "Strategic", "Other"
-    • priority_level: "High", "Medium", or "Low" depending on the severity and impact
-    • confidence_score: Float between 0.0 and 1.0 based on how certain the risk signal is
-    • event_timeline: Optional, if the article provides specific dates for the event
-    • is_subsadariy_parent_company: 
-        • True if the article is talking about a parent company issue that impacts the subsidiary/target company, or if both are discussed and there is a correlation or impact.
-        • False if the article is talking only and explicitly about the subsidiary/target company, with no impact or connection to the parent company.
-    • is_subsadariy_parent_company_reason: Reason for the is_subsadariy_parent_company classification
+        If risk is identified, extract:
+            • risk_explanation
+            • risk_snippet
+            • risk_category (choose from: "Legal", "Financial", "Compliance", "Operational", "Reputational", "Strategic", "Other")
+            • priority_level ("High", "Medium", "Low")
+            • confidence_score (float between 0.0–1.0)
+            • event_timeline (if date is mentioned)
+            • is_subsadariy_parent_company:
+                - True if parent-company issues affect the subsidiary
+                - False if only the subsidiary is discussed
+            • is_subsadariy_parent_company_reason
 
-If there are multiple risks, extract only the most significant one.
+        Limit to the most significant risk if multiple exist.
 
-⸻
+        ⸻
 
-✅ Step 4: General Metadata
+        ✅ Step 4: General Metadata
 
-Extract the following from the article:
-    • published_date: Format as YYYY-MM-DD (if available)
-    • author: Article author or source
-    • keywords: 3–7 terms summarizing the core topic
-    • Examples: "litigation", "legal victory", "trademark ruling", "funding round", "AI expansion", "hiring"
+        Extract:
+            • published_date (YYYY-MM-DD)
+            • author or source
+            • keywords (3–7 terms summarizing the core topic)
 
-⸻
+        ⸻
 
-🧾 Output Format
+        🧾 Output Format
 
-If the article is relevant, return one structured {ArticleContent.schema()} object.
+        For relevant articles, respond with a structured {ArticleContent.schema()} object.
 
-If the article is not relevant (e.g., unrelated, only about a parent company with no impact on the alias, too vague, or is general and not about a specific event or news), return:
+        If irrelevant, general, or unrelated (as outlined above), respond with an empty aray
 
-[]"""
+        """
 
         human_prompt = f"""
-Please analyze this article content:
+        Analyze the article content below:
 
-URL: {url}
-Content: {content}
-
-Return only the JSON response as specified in the system prompt.
-"""
+        URL: {url}
+        Content: {content}
+        please only return the json format described above.
+        """
 
         return [
             SystemMessage(content=system_prompt),
             HumanMessage(content=human_prompt)
         ]
+
 
     async def extract_and_analyze_single_url(self, search_result: Dict[str, Any], aliases: List[str], parent_company_name: str) -> Dict[str, Any]:
         """Extract content and analyze a single URL - always fresh processing"""
