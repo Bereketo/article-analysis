@@ -18,14 +18,14 @@ def clean_json_output(json_str: str) -> str:
 
 # Pydantic models for request/response
 class ArticleAnalysisRequest(BaseModel):
-    url: str
+    url: List[str]
     content: str  # Add content as parameter
     aliases: List[str]
     parent_company_name: str
     source: Optional[str] = "direct"  # google, duckduckgo, or direct
 
 class ArticleAnalysisResponse(BaseModel):
-    url: str
+    url: List[str]  # Changed to List[str] to match request format
     content: str
     analysis: Dict[str, Any]  # ArticleContent schema output
     risk_category: Optional[str]
@@ -118,14 +118,14 @@ async def analyze_article(request: ArticleAnalysisRequest):
         
         # Prepare response
         response_data = ArticleAnalysisResponse(
-            url=request.url,
+            url=request.url,  # Return the list of URLs
             content=request.content,
             analysis=analysis,
             risk_category=risk_category,
             source=request.source,
             alias=request.aliases,
             content_metadata=content_metadata,
-            timestamp=datetime.now().isoformat()
+            timestamp=datetime.utcnow().isoformat()
         )
         
         # Save to llm-analysis directory
