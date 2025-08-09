@@ -4,6 +4,7 @@ from api.aliases_endpoint import router as aliases_router
 from api.serp_endpoint import router as serp_router
 from api.content_extraction_endpoint import router as content_router
 from api.article_analysis_endpoint import router as article_router
+from api.full_analysis_endpoint import router as full_analysis_router
 import os
 
 # Main FastAPI application
@@ -39,6 +40,7 @@ app.include_router(aliases_router)
 app.include_router(serp_router)
 app.include_router(content_router)
 app.include_router(article_router)
+app.include_router(full_analysis_router)
 
 # Root endpoint
 @app.get("/", tags=["root"])
@@ -55,7 +57,8 @@ async def root():
             "content_extraction": "/api/cdd/extract",
             "content_extraction_health": "/api/content-extraction/health",
             "article_analysis": "/api/cdd/article-analysis",
-            "article_analysis_health": "/api/article-analysis/health"
+            "article_analysis_health": "/api/article-analysis/health",
+            "full_analysis": "/api/cdd/full-analysis"
         }
     }
  
