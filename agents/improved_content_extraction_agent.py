@@ -52,7 +52,7 @@ logger = setup_logging()
 os.environ["AZURE_OPENAI_API_KEY"] = "1f5d1bb6920844248ea17f61f73f82ac"
 os.environ["AZURE_OPENAI_ENDPOINT"] = "https://ai-gpt-echo.openai.azure.com"
 os.environ["AZURE_OPENAI_API_VERSION"] = "2024-12-01-preview"
-os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"] = "gpt-4.1"
+os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"] = "gpt-4o"
 
 class ArticleMetadata(BaseModel):
     # Adverse Event Detection
@@ -141,7 +141,7 @@ class ImprovedContentExtractionAgent:
         self.llm = AzureChatOpenAI(
             openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
             azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-            azure_deployment="gpt-4.1",
+            azure_deployment="gpt-4o",  # Updated to use gpt-4o deployment
             openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
             temperature=0
         )
@@ -337,12 +337,10 @@ class ImprovedContentExtractionAgent:
             • If the article solely discusses {parent_company_name} without referencing or impacting {aliases}, mark:
                 • is_filter = true
                 • is_filter_reason = "Focus is only on the parent company; no relevance to the target company."
-                • Output: []
 
             • If both {parent_company_name} and {aliases} are mentioned but without meaningful connection, mark:
                 • is_filter = true
                 • is_filter_reason = "Mentions are independent; no clear relationship or effect."
-                • Output: []
 
             • If a clear connection or impact is evident between the entities, or if the article focuses on {aliases}, consider it relevant.
 
@@ -354,7 +352,6 @@ class ImprovedContentExtractionAgent:
             • If content is general (e.g., background info or company overview) with no newsworthy event or development, mark:
                 • is_filter = true
                 • is_filter_reason = "General context; no specific development or incident."
-                • Output: []
 
             • Consider an article relevant if:
                 - It centers on {aliases}' activities (legal, strategic, operational, reputational)
@@ -404,17 +401,20 @@ class ImprovedContentExtractionAgent:
         ✅ Step 4: General Metadata
 
         Extract:
-            • published_date (YYYY-MM-DD)
+            • published_date (YYYY-MM-DD): Look carefully for dates in the article content, headers, or URL. Search for patterns like "January 15, 2023", "15/01/2023", "2023-01-15", or similar date formats. If no explicit publication date is found, try to infer from context clues or timestamps. Return null only if absolutely no date information is available.
             • author or source
             • keywords (3–7 terms summarizing the core topic)
 
         ⸻
 
         🧾 Output Format
-
-        For relevant articles, respond with a structured {ArticleContent.schema()} object.
-
-        If irrelevant, general, or unrelated (as outlined above), respond with an empty aray
+        
+        ALWAYS respond with a valid JSON object following the {ArticleContent.model_json_schema()} schema.
+        
+        For relevant articles: Fill out all applicable fields based on the content analysis.
+        For irrelevant articles: Set is_filter=true and provide is_filter_reason, leave other fields as defaults or null.
+        
+        Never return an empty array or any other format - always return a complete JSON object.
 
         """
 
