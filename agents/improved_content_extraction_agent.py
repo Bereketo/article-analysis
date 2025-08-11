@@ -165,7 +165,7 @@ class ImprovedContentExtractionAgent:
         }
 
         self.google_search = SerpAPIWrapper(
-            serpapi_api_key="431a7a3a63778b0e41f8b1513056fe871f63132e5a1a5977ece07d48eddf628b",
+            serpapi_api_key="f055086d4349703c4f399e24eb7db6a54b37eb130c2330a2dea1ead04381ccb5",
             params=self.google_params,
         )
         
@@ -178,7 +178,7 @@ class ImprovedContentExtractionAgent:
             }
             
             self.duckduckgo_search = SerpAPIWrapper(
-                serpapi_api_key="431a7a3a63778b0e41f8b1513056fe871f63132e5a1a5977ece07d48eddf628b",
+                serpapi_api_key="f055086d4349703c4f399e24eb7db6a54b37eb130c2330a2dea1ead04381ccb5",
                 params=self.duckduckgo_params,
             )
             
