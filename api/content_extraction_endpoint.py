@@ -164,8 +164,9 @@ async def extract_content(request: ContentExtractionRequest):
             jina_content = result.get("jina_content", {})
             raw_content = jina_content.get("content", "")
 
-            # cleaned content
+            # Clean content using LLM
             cleaned_content = await _clean_content_with_llm(raw_content, request.parent_company_name)
+            
             # Extract domain from URL
             from urllib.parse import urlparse
             parsed_url = urlparse(result.get("link", ""))

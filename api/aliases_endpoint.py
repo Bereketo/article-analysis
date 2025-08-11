@@ -34,7 +34,6 @@ async def _correct_spelling_and_validate(company_name: str, country: str) -> Dic
     - Standardize company suffixes (Ltd, Limited, Inc, etc.)
     - Use proper country names (not abbreviations)
     """
-    print("BEING PROCESSED")
     try:
         from langchain_openai import AzureChatOpenAI
         from langchain.schema import HumanMessage
@@ -120,7 +119,6 @@ async def get_company_aliases(request: AliasRequest):
             company_name=corrected_company,
             country=corrected_country
         )
-        print(result)
         return result
         
     except Exception as e:
@@ -138,6 +136,3 @@ async def health_check():
         "agent_type": "comprehensive_alias_agent"
     }
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(router, host="0.0.0.0", port=8000)

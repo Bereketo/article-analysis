@@ -281,7 +281,7 @@ async def analyze_articles(request: ArticleAnalysisRequest):
             
             # For fields that should be at the top level of analysis (based on ArticleContent model)
             top_level_fields = {
-                'published_date', 'author', 'keywords', 'is_filter', 'is_filter_reason', 
+                'author', 'keywords', 'is_filter', 'is_filter_reason', 
                 'is_adverse', 'is_adverse_reason'
             }
             
@@ -327,38 +327,7 @@ async def analyze_articles(request: ArticleAnalysisRequest):
             else:
                 logger.debug(f"Fallback to processed analysis for Excel export for URL: {result.get('url', 'Unknown')}")
             
-            # Extract published date with robust parsing using the helper function
-            published_date = (
-                extract_metadata_field(result, 'published_date') or
-                content_meta.get('published_date') or
-                ''
-            )
-            
             # Skip Jina content extraction for performance
-            
-            # Convert to pandas timestamp if valid
-            if published_date:
-                try:
-                    published_date = pd.to_datetime(published_date, errors='coerce')
-                except:
-                    published_date = ''
-            
-            # If still no date, try to extract from URL or other sources
-            if not published_date:
-                try:
-                    # Try to get it from the article URL or title patterns
-                    url = result.get('url', '')
-                    title = result.get('title', '')
-                    
-                    # Look for date patterns in URL
-                    date_pattern = r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})'
-                    url_match = re.search(date_pattern, url)
-                    if url_match:
-                        year, month, day = url_match.groups()
-                        published_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-                        published_date = pd.to_datetime(published_date, errors='coerce')
-                except:
-                    published_date = ''
             
             # Clean keywords field (convert list to string if needed)
             keywords = extract_metadata_field(result, 'keywords', [])
@@ -371,7 +340,6 @@ async def analyze_articles(request: ArticleAnalysisRequest):
                 # Basic URL and content info (matching notebook)
                 'url': result.get('url', ''),
                 'title': result.get('title', ''),
-                'published_date': published_date,
                 'is_adverse': extract_metadata_field(result, 'is_adverse', 'Neutral'),
                 'is_adverse_reason': extract_metadata_field(result, 'is_adverse_reason', ''),
                 'risk_category': extract_metadata_field(result, 'risk_category', ''),
@@ -402,9 +370,9 @@ async def analyze_articles(request: ArticleAnalysisRequest):
         # Create DataFrame
         df = pd.DataFrame(df_data)
         
-        # Define export columns (removed content_length, confidence_score, and source_query)
+        # Define export columns (removed content_length, confidence_score, source_query, and published_date)
         export_columns = [
-            'url', 'title', 'published_date', 'is_adverse', 'is_adverse_reason',
+            'url', 'title', 'is_adverse', 'is_adverse_reason',
             'risk_category', 'risk_explanation', 'risk_snippet', 'priority_level',
             'has_fraud', 'has_litigation', 'has_insolvency',
             'has_regulatory_action', 'author', 'keywords',
@@ -497,12 +465,12 @@ async def analyze_articles(request: ArticleAnalysisRequest):
         logger.info(f"📄 CSV analysis results written to {csv_filepath}")
         
         # Log summary statistics
-        logger.info(f"📈 Export Summary:")
-        logger.info(f"   📄 All Articles sheet: {len(df_cleaned)} rows")
-        logger.info(f"   🎯 Subsidiary Specific sheet: {len(subsidiary_articles)} rows")
-        logger.info(f"   🏭 Parent Company Impact sheet: {len(parent_impact_articles)} rows")
-        logger.info(f"   ⚠️  Adverse Only sheet: {len(adverse_articles)} rows")
-        logger.info(f"   📊 Summary sheet: Analysis metadata")
+        logger.info(f"Export Summary:")
+        logger.info(f"    All Articles sheet: {len(df_cleaned)} rows")
+        logger.info(f"   Subsidiary Specific sheet: {len(subsidiary_articles)} rows")
+        logger.info(f"   Parent Company Impact sheet: {len(parent_impact_articles)} rows")
+        logger.info(f"   Adverse Only sheet: {len(adverse_articles)} rows")
+        logger.info(f"   Summary sheet: Analysis metadata")
 
         return response_data
         
@@ -563,71 +531,11 @@ async def _process_single_article(
                 "metadata": {}
             }
         
-        # DEBUG: Save raw LLM response to debug folder
-        try:
-            debug_dir = os.path.join(os.path.dirname(__file__), '../debug')
-            os.makedirs(debug_dir, exist_ok=True)
-            
-            # Create a safe filename from URL
-            safe_url = article.url or f"article_{start_time.timestamp()}"
-            safe_url = re.sub(r'[^a-zA-Z0-9_-]', '_', safe_url)[:50]  # Limit length and sanitize
-            timestamp_str = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f')[:19]  # Remove microseconds
-            debug_filename = f"raw_llm_response_{safe_url}_{timestamp_str}.json"
-            debug_filepath = os.path.join(debug_dir, debug_filename)
-            
-            debug_data = {
-                "article_url": article.url,
-                "article_title": article.title,
-                "content_length": len(article.content) if article.content else 0,
-                "parent_company_name": parent_company_name,
-                "aliases": aliases,
-                "raw_llm_response": raw_llm_response,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "prompt_messages": [{
-                    "role": msg.type if hasattr(msg, 'type') else "unknown",
-                    "content": msg.content if hasattr(msg, 'content') else str(msg)
-                } for msg in prompt_messages]
-            }
-            
-            with open(debug_filepath, 'w', encoding='utf-8') as f:
-                json.dump(debug_data, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"🐛 Raw LLM response saved to {debug_filepath}")
-            
-        except Exception as debug_error:
-            logger.warning(f"Failed to save debug data: {str(debug_error)}")
         
         # Clean and parse the response using the existing logic for backward compatibility
         cleaned_content = clean_json_output(response.content)
         analysis = extractor.json_parser.parse(cleaned_content)
         
-        # DEBUG: Save the parsed analysis results too
-        try:
-            debug_dir = os.path.join(os.path.dirname(__file__), '../debug')
-            safe_url = article.url or f"article_{start_time.timestamp()}"
-            safe_url = re.sub(r'[^a-zA-Z0-9_-]', '_', safe_url)[:50]
-            timestamp_str = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f')[:19]
-            
-            parsed_debug_filename = f"parsed_analysis_{safe_url}_{timestamp_str}.json"
-            parsed_debug_filepath = os.path.join(debug_dir, parsed_debug_filename)
-            
-            parsed_debug_data = {
-                "article_url": article.url,
-                "cleaned_llm_content": cleaned_content,
-                "parsed_analysis": analysis,
-                "analysis_type": str(type(analysis).__name__),
-                "analysis_is_list": isinstance(analysis, list),
-                "analysis_is_dict": isinstance(analysis, dict),
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            }
-            
-            with open(parsed_debug_filepath, 'w', encoding='utf-8') as f:
-                json.dump(parsed_debug_data, f, ensure_ascii=False, indent=2, default=str)
-            
-            logger.info(f"🐛 Parsed analysis saved to {parsed_debug_filepath}")
-            
-        except Exception as debug_error:
-            logger.warning(f"Failed to save parsed analysis debug data: {str(debug_error)}")
         
         # Handle case where analysis might be a list
         if isinstance(analysis, list):
@@ -707,8 +615,6 @@ async def _process_single_article(
             "timestamp": datetime.now(timezone.utc).isoformat()  
         }
         
-        # For debugging - log the full error response
-        logger.debug(f"Error response for {article_id}: {json.dumps(error_response, indent=2)}")
         
         # Re-raise the exception to be handled by the caller
         raise RuntimeError(f"Failed to process article {article_id}: {str(e)}") from e

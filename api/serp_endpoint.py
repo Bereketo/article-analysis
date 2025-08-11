@@ -73,8 +73,6 @@ async def search_content(request: SerpRequest):
         
         # Process time window
         start_date_str, end_date_str = _process_time_window(request.start_date, request.end_date, request.time_window_days)
-        
-        # Convert string dates to datetime objects for the agent
         start_date = None
         end_date = None
         if start_date_str and end_date_str:
@@ -91,16 +89,12 @@ async def search_content(request: SerpRequest):
         # First, get just the search results
         search_results = extractor.extract_content(
             queries=request.adverse_search_queries,
-            start_date=start_date,  # Now datetime object
-            end_date=end_date,      # Now datetime object
+            start_date=start_date,
+            end_date=end_date,
             num_results=10
         )
 
 
-        # Save search results to a JSON file
-        os.makedirs("search_results", exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        search_results_file = f"search_results/search_results_{timestamp}.json"
         
         # Initialize Azure OpenAI LLM for title analysis
         from langchain_openai import AzureChatOpenAI
@@ -109,7 +103,7 @@ async def search_content(request: SerpRequest):
         llm = AzureChatOpenAI(
             openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
             azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-            azure_deployment="gpt-4.1",
+            azure_deployment="gpt-4o",
             openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
             temperature=0
         )
@@ -194,18 +188,7 @@ async def search_content(request: SerpRequest):
             if i + batch_size < len(search_results):
                 await asyncio.sleep(1)
         
-        # Save to JSON file
-        with open(search_results_file, 'w', encoding='utf-8') as f:
-            json.dump({
-                'search_queries': request.adverse_search_queries,
-                'aliases': request.aliases,
-                'parent_company_name': request.parent_company,
-                'timestamp': datetime.now().isoformat(),
-                'result_count': len(serializable_results),
-                'results': serializable_results
-            }, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"✅ Saved {len(serializable_results)} search results to {search_results_file}")
+        logger.info(f"✅ Processing completed with {len(serializable_results)} search results")
         
         # Calculate total articles
         total_articles = len(serializable_results)
