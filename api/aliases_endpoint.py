@@ -3,7 +3,9 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 import logging
 import asyncio
-from agents.comprehensive_alias_agent import ComprehensiveAliasAgent
+import json
+import re
+from agents.alias_generation_improved import alias_agent_improved
 
 # Pydantic models for request/response
 
@@ -46,7 +48,7 @@ async def _correct_spelling_and_validate(company_name: str, country: str) -> Dic
             azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
             azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
             openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-            temperature=0.1
+            temperature=0.0
         )
         
         response = await llm.ainvoke([HumanMessage(content=correction_prompt)])
@@ -71,6 +73,7 @@ class AliasResponse(BaseModel):
     stock_symbols: List[str]
     local_variants: List[str]
     parent_company: str
+    target_names: List[str]
     adverse_search_queries: List[str]
     all_aliases: str
     confidence_score: Optional[float] = None
@@ -89,7 +92,7 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 # Initialize the comprehensive agent
-comprehensive_agent = ComprehensiveAliasAgent()
+
 
 @router.post(
     "/aliases", 
@@ -115,11 +118,22 @@ async def get_company_aliases(request: AliasRequest):
         if corrected_company != request.company_name or corrected_country != request.country:
             logger.info(f"📝 Spelling corrections applied: '{request.company_name}' → '{corrected_company}', '{request.country}' → '{corrected_country}'")
 
-        result = await comprehensive_agent.generate_comprehensive_aliases(
-            company_name=corrected_company,
-            country=corrected_country
+        alias_data = await alias_agent_improved.generate_aliases(corrected_company, corrected_country)
+        logger.info(f"📊 Generated data - Primary: {alias_data['primary_alias']}, Aliases: {len(alias_data['aliases'])}, Adverse: {len(alias_data['adverse_search_queries'])}")
+        
+        # Structure the response
+        return AliasResponse(
+            primary_alias=alias_data["primary_alias"],
+            aliases=alias_data["aliases"],
+            stock_symbols=alias_data["stock_symbols"],
+            local_variants=alias_data["local_variants"],
+            parent_company=alias_data["parent_company"],
+            target_names=alias_data["target_names"],
+            adverse_search_queries=alias_data["adverse_search_queries"],
+            all_aliases=alias_data["all_aliases"],
+            confidence_score=alias_data["confidence_score"],
+            total_adverse_queries=len(alias_data["adverse_search_queries"])
         )
-        return result
         
     except Exception as e:
         logger.error(f"❌ Error processing comprehensive alias request: {str(e)}")
