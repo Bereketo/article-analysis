@@ -1,17 +1,32 @@
-from fastapi import APIRouter, HTTPException, Query
-from typing import Dict, Any
+from fastapi import APIRouter, HTTPException, Query, Body
+from pydantic import BaseModel
+from typing import Dict, Any, List, Optional
 import logging
 import requests
 
+class ContinueAnalysisRequest(BaseModel):
+    primary_alias: str
+    aliases: List[str]
+    stock_symbols: List[str]
+    local_variants: List[str]
+    parent_company: str
+    target_names: List[str]
+    adverse_search_queries: List[str]
+    all_aliases: str
+    confidence_score: Optional[float] = None
+    total_adverse_queries: Optional[int] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
 router = APIRouter(
     prefix="/api/cdd",
-    tags=["full-company-analysis"],
+    tags=["aliases2"],
     responses={404: {"description": "Not found"}},
 )
 
 logger = logging.getLogger(__name__)
 
-@router.post("/full-company-analysis")
+@router.post("/aliases2")
 def full_company_analysis(
     company_name: str = Query(...), 
     country: str = Query(...),
@@ -36,19 +51,50 @@ def full_company_analysis(
             logger.error(f"Error in aliases step: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
         
-        # 2. Perform search
-        search_payload = {
+        # Return aliases_data for user editing (including date parameters)
+        editable_response = {
             "primary_alias": aliases_data.get("primary_alias"),
             "aliases": aliases_data.get("aliases", []),
             "stock_symbols": aliases_data.get("stock_symbols", []),
             "local_variants": aliases_data.get("local_variants", []),
             "parent_company": aliases_data.get("parent_company"),
+            "target_names": aliases_data.get("target_names", []),
             "adverse_search_queries": aliases_data.get("adverse_search_queries", []),
             "all_aliases": aliases_data.get("all_aliases", ""),
-            "confidence_score": aliases_data.get("confidence_score", 0),
-            "total_adverse_queries": aliases_data.get("total_adverse_queries", 0),
+            "confidence_score": aliases_data.get("confidence_score", 0.8),
+            "total_adverse_queries": aliases_data.get("total_adverse_queries", None),
             "start_date": start_date,
             "end_date": end_date
+        }
+        
+        logger.info(f"Aliases generated for {company_name}, awaiting user input")
+        return editable_response
+
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/report")
+def continue_analysis(request: ContinueAnalysisRequest):
+    """
+    Continue the analysis pipeline with user-edited aliases data and generate report.
+    """
+    try:
+        logger.info(f"Continuing analysis with user-edited aliases")
+        
+        # 2. Perform search with user-edited aliases
+        search_payload = {
+            "primary_alias": request.primary_alias,
+            "aliases": request.aliases,
+            "stock_symbols": request.stock_symbols,
+            "local_variants": request.local_variants,
+            "parent_company": request.parent_company,
+            "adverse_search_queries": request.adverse_search_queries,
+            "all_aliases": request.all_aliases,
+            "confidence_score": request.confidence_score,
+            "total_adverse_queries": request.total_adverse_queries,
+            "start_date": request.start_date,
+            "end_date": request.end_date
         }
         
         logger.info(f"Searching for articles")
@@ -66,7 +112,7 @@ def full_company_analysis(
             raise HTTPException(status_code=500, detail="Missing or malformed 'simplified_data' in search response")
         
         extract_payload = {
-            "urls": simplified_data.get("urls", []), 
+            "urls": simplified_data.get("urls", [])[:5], 
             "aliases": simplified_data.get("aliases", []),
             "parent_company_name": simplified_data.get("parent_company_name", "")
         }
@@ -93,7 +139,7 @@ def full_company_analysis(
         ]
 
         # Limit to 5 articles for analysis
-        articles_for_analysis = articles_for_analysis
+        articles_for_analysis = articles_for_analysis[:5]
 
         simplified_data = extract_data.get("simplified_data", {})
         aliases = simplified_data.get("aliases") or extract_data.get("processing_summary", {}).get("aliases_used", [])
