@@ -8,6 +8,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 import re
 from agents.improved_content_extraction_agent import ImprovedContentExtractionAgent
+from services.email_service import SimpleEmailService
 
 def _style_excel_headers(worksheet):
     """Apply styling to Excel worksheet headers"""
@@ -236,7 +237,7 @@ async def analyze_articles(request: ArticleAnalysisRequest):
         hash_input = f"{request.parent_company_name}_{datetime.now(timezone.utc).isoformat()}"
         file_hash = hashlib.md5(hash_input.encode('utf-8')).hexdigest()[:8]
         timestamp_str = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f')
-        filename = f"article_analysis_{timestamp_str}_{file_hash}.json"
+        filename = f"{request.parent_company_name}_{timestamp_str}.json"
         filepath = os.path.join(output_dir, filename)
         response_data = ArticleAnalysisResponse(
             results=successful_results,
@@ -432,7 +433,6 @@ async def analyze_articles(request: ArticleAnalysisRequest):
             
             # Sheet 5: Summary statistics (matching notebook)
             summary_data = [
-                ['Company Name', request.parent_company_name],
                 ['Parent Company', request.parent_company_name],
                 ['Analysis Date', datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')],
                 ['Total Articles Processed', len(df)],
@@ -471,6 +471,20 @@ async def analyze_articles(request: ArticleAnalysisRequest):
         logger.info(f"   Parent Company Impact sheet: {len(parent_impact_articles)} rows")
         logger.info(f"   Adverse Only sheet: {len(adverse_articles)} rows")
         logger.info(f"   Summary sheet: Analysis metadata")
+        
+        # Send Excel results via email
+        try:
+            logger.info(f"📧 Sending Excel results via email...")
+            email_service = SimpleEmailService()
+            email_sent = email_service.send_excel_results(excel_filepath, request.parent_company_name)
+            if email_sent:
+                logger.info(f"✅ Excel results successfully sent via email")
+            else:
+                logger.warning(f"⚠️ Failed to send Excel results via email")
+        except Exception as e:
+            logger.error(f"❌ Error sending email: {str(e)}")
+            # Don't fail the whole request if email fails
+            pass
 
         return response_data
         
