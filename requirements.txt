@@ -1,59 +1,171 @@
-# Core dependencies for the Improved Content Extraction Agent
-# Production server
-gunicorn==21.2.0
+# =============================================================================
+# CORPORATE INTELLIGENCE API - REQUIREMENTS
+# =============================================================================
+# This file contains all Python dependencies for the Corporate Intelligence API
+# Updated: 2025-08-11 - Complete dependency analysis from codebase
+# =============================================================================
+
+# =============================================================================
+# CORE WEB FRAMEWORK & SERVER
+# =============================================================================
+fastapi>=0.104.0
 uvicorn[standard]>=0.23.0
+gunicorn>=21.2.0
 
+# =============================================================================
+# HTTP CLIENTS & ASYNC SUPPORT
+# =============================================================================
 aiohttp>=3.8.0
-requests>=2.28.0
-pandas>=1.5.0
-numpy>=1.21.0
-fastapi
+requests>=2.31.0
+httpx>=0.25.0
 
-# LangChain and OpenAI
+# =============================================================================
+# LANGCHAIN ECOSYSTEM (AI/LLM INTEGRATION)
+# =============================================================================
 langchain>=0.1.0
 langchain-openai>=0.1.0
 langchain-community>=0.1.0
 langchain-core>=0.1.0
 
-# Date and time handling
-python-dateutil>=2.8.0
-
-# Progress bars
-tqdm>=4.64.0
-
-# Pydantic for data validation
-pydantic>=2.0.0
-
-# Excel file handling
-openpyxl>=3.0.0
-
-# URL parsing and manipulation
-urllib3>=1.26.0
-
-# Async support
-asyncio-mqtt>=0.11.0
-
-# Logging and utilities
-python-dotenv>=0.19.0
-
-# Optional: For better JSON handling
-orjson>=3.8.0
-
-# Optional: For enhanced HTTP requests
-httpx>=0.24.0
-
-# Jupyter Notebook support (for running the notebook)
-jupyter>=1.0.0
-ipykernel>=6.0.0
-ipywidgets>=8.0.0
-jupyterlab>=3.0.0
-jupyter-console>=6.0.0
-
-# Search API (required for web search functionality)
+# =============================================================================
+# SEARCH APIS & INTEGRATIONS
+# =============================================================================
+# SerpAPI for Google & DuckDuckGo search
 google-search-results>=2.4.2
 
-# Path handling
-pathlib>=1.0.1
+# LangChain Hub for prompts
+langchainhub>=0.1.14
 
-# Logging
-logging>=0.4.9.6
+# =============================================================================
+# DATA VALIDATION & SERIALIZATION
+# =============================================================================
+pydantic>=2.0.0
+orjson>=3.9.0
+
+# =============================================================================
+# DATE & TIME HANDLING
+# =============================================================================
+python-dateutil>=2.8.2
+
+# =============================================================================
+# DATA PROCESSING & ANALYTICS
+# =============================================================================
+pandas>=2.0.0
+numpy>=1.24.0
+
+# =============================================================================
+# PROGRESS BARS & UI
+# =============================================================================
+tqdm>=4.66.0
+
+# =============================================================================
+# URL PARSING & WEB UTILITIES
+# =============================================================================
+urllib3>=2.0.0
+
+# =============================================================================
+# FILE FORMAT SUPPORT
+# =============================================================================
+openpyxl>=3.1.0
+
+# =============================================================================
+# AWS SERVICES
+# =============================================================================
+boto3>=1.28.0
+botocore>=1.31.0
+
+# =============================================================================
+# ENVIRONMENT & CONFIGURATION
+# =============================================================================
+python-dotenv>=1.0.0
+
+# =============================================================================
+# EMAIL FUNCTIONALITY
+# =============================================================================
+# SMTP email support with HTML templates
+aiosmtplib>=2.0.0
+email-validator>=2.0.0
+jinja2>=3.1.0
+
+# =============================================================================
+# TESTING FRAMEWORK
+# =============================================================================
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# =============================================================================
+# TYPE CHECKING & DEVELOPMENT
+# =============================================================================
+typing-extensions>=4.7.0
+
+# =============================================================================
+# STANDARD LIBRARY MODULES (NO EXTERNAL DEPENDENCIES)
+# =============================================================================
+# The following are Python standard library modules used in the project:
+# - json, logging, os, sys, re, asyncio, multiprocessing
+# - collections, dataclasses, datetime, time
+# - urllib.parse, pathlib
+
+# =============================================================================
+# OPTIONAL DEPENDENCIES FOR DEVELOPMENT
+# =============================================================================
+
+# Jupyter Notebook Support (optional for development/testing)
+jupyter>=1.0.0
+ipykernel>=6.25.0
+ipywidgets>=8.1.0
+jupyterlab>=4.0.0
+jupyter-console>=6.6.0
+nbformat>=5.9.0
+
+# Code Quality & Formatting (optional)
+black>=23.7.0
+flake8>=6.0.0
+mypy>=1.5.0
+
+# =============================================================================
+# PRODUCTION DEPLOYMENT
+# =============================================================================
+
+# Process Management
+supervisor>=4.2.0
+
+# Monitoring & Logging
+psutil>=5.9.0
+
+# =============================================================================
+# INSTALLATION INSTRUCTIONS
+# =============================================================================
+# 
+# For core functionality:
+#   pip install -r requirements.txt
+# 
+# For development with all optional dependencies:
+#   pip install -r requirements.txt jupyter black flake8 mypy
+# 
+# For production deployment:
+#   pip install -r requirements.txt supervisor psutil
+# 
+# =============================================================================
+# VERSION COMPATIBILITY NOTES
+# =============================================================================
+# - Python 3.8+ required
+# - FastAPI 0.104+ for latest Pydantic v2 support
+# - LangChain 0.1+ for Azure OpenAI integration
+# - aiohttp 3.8+ for async HTTP operations
+# - pydantic 2.0+ for modern data validation
+# - google-search-results provides SerpAPI wrapper
+# - langchainhub required for langchain.hub.pull()
+# 
+# =============================================================================
+# API KEYS & CONFIGURATION REQUIRED
+# =============================================================================
+# The following API keys and configuration are required for full functionality:
+# - AZURE_OPENAI_API_KEY: Azure OpenAI service
+# - SERPAPI_API_KEY: SerpAPI for Google/DuckDuckGo search
+# - BING_SUBSCRIPTION_KEY: Bing Search API (optional)
+# - JINA_API_KEY: Jina AI content extraction (optional)
+# - AWS_ACCESS_KEY_ID: AWS access key for S3 uploads
+# - AWS_SECRET_ACCESS_KEY: AWS secret key for S3 uploads
+# - AWS_S3_BUCKET: S3 bucket name for Excel file uploads
+# - AWS_DEFAULT_REGION: AWS region (optional, defaults to us-east-1)
