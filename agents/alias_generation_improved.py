@@ -245,14 +245,19 @@ Research "{company_name}" now and provide the comprehensive JSON response:"""
         fraud_financial_keywords = [
             "fraud", "default", "kickback", "scandal", "probe", "penalty", "misconduct",
             "CBI", "imprisonment", "police", "scam", "vigilance", "litigation", "arrests",
-            "accused", "accuse", "alleged", "allegedly", "sentenced", "illegal", "lawsuit"
+            "accused", "accuse", "alleged", "allegedly", "sentenced", "illegal", "lawsuit",
+            "absconded", "absconding", "absconds", "abuse", "abused", "accident", 
+            "ban", "bribed", "case", "complying", "crime", "investigate", "investigated",
+            "lobbying", "loss", "penalized", "political", "politics", "probed", 
+            "warn", "warned", "warning"
         ]
         
         # Category B: Legal/Criminal/Political Keywords
         legal_criminal_keywords = [
             "ban", "banned", "politics", "political", "murder", "bribe", "bribed",
             "rape", "raped", "raping", "robbed", "rob", "theft", "charged", "mobbed",
-            "jail", "jailed", "victim", "underworld", "terrorists", "terrorist", "terrorism"
+            "jail", "jailed", "victim", "underworld", "terrorists", "terrorist", "terrorism",
+            "cronies", "downfall", "imprisoned", "strike", "terminate"
         ]
         
         # Category C: Investigation/Compliance/Manipulation Keywords
@@ -334,22 +339,34 @@ Research "{company_name}" now and provide the comprehensive JSON response:"""
         
         queries = []
         
-        # Optimized keyword groups - 3 comprehensive groups with 15 keywords each
+        # Keyword groups - exactly 15 keywords each for manageable query length
         keyword_groups = [
-            # Group 1: Fraud, Financial Crimes & Corruption (15 keywords)
+            # Group 1: Fraud & Financial Crimes (15 keywords)
             ["fraud", "scandal", "kickback", "misconduct", "scam", "bribe", "corruption", 
              "embezzlement", "money-laundering", "forgery", "default", "bankruptcy", 
              "insolvency", "penalty", "fine"],
             
-            # Group 2: Legal, Criminal & Violent Crimes (15 keywords)  
+            # Group 2: Legal & Criminal Actions (15 keywords)  
             ["lawsuit", "litigation", "investigation", "probe", "arrested", "charged", 
              "accused", "criminal", "police", "CBI", "murder", "rape", "assault", 
              "violence", "terrorism"],
             
-            # Group 3: Regulatory, Compliance & Consequences (15 keywords)
+            # Group 3: Regulatory & Compliance (15 keywords)
             ["banned", "suspension", "sanctions", "violation", "breach", "imprisonment", 
              "prison", "jail", "jailed", "sentenced", "conviction", "guilty", "manipulated", 
-             "manipulation", "compliance"]
+             "manipulation", "compliance"],
+             
+            # Group 4: Allegations & Legal Status (15 keywords)
+            ["ban", "alleged", "allegedly", "illegal", "sentenced", "case", "vigilance",
+             "litigation", "arrests", "accused", "accuse", "lawsuit", "mobbed", "victim", "underworld"],
+             
+            # Group 5: Criminal Activities & Consequences (15 keywords)
+            ["rob", "robbed", "theft", "terrorist", "terrorists", "cronies", "downfall",
+             "strike", "terminate", "raped", "raping", "absconded", "absconding", "absconds", "bribed"],
+             
+            # Group 6: Investigation & Warnings (15 keywords)
+            ["abuse", "abused", "accident", "complying", "crime", "investigate", "investigated",
+             "probed", "lobbying", "loss", "penalized", "political", "politics", "warn", "warned"]
         ]
         
         # COMPREHENSIVE APPROACH: Every target name with every keyword group
