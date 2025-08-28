@@ -499,6 +499,76 @@ class ImprovedContentExtractionAgent:
             
             return search_result
 
+    async def extract_content_only_single_url(self, search_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract content from a single URL using Jina AI - NO analysis"""
+        url = search_result.get("link", "")
+        
+        try:
+            # Step 1: Extract content from Jina AI only
+            logger.debug(f"Extracting content for {url} (content-only mode)")
+            jina_content = await self.extract_content_with_jina(url)
+            
+            # Determine extraction status
+            if not jina_content.get("content", ""):
+                search_result["extraction_status"] = "no_content"
+            else:
+                search_result["extraction_status"] = "success"
+            
+            search_result["jina_content"] = jina_content
+            
+            # No analysis - just return the extracted content
+            return search_result
+            
+        except Exception as e:
+            logger.error(f"Error processing {url}: {str(e)}")
+            search_result["jina_content"] = {}
+            search_result["extraction_status"] = "failed"
+            search_result["extraction_error"] = str(e)
+            
+            return search_result
+
+    async def extract_content_only_parallel(self, search_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Extract content only in parallel - NO analysis
+        Only Jina AI extraction happens for each URL
+        """
+        logger.info(f"🚀 Starting content-only extraction for {len(search_results)} URLs")
+        logger.info(f"📊 Configuration: concurrent_limit={self.concurrent_limit}")
+        
+        # Create semaphore to limit concurrent requests
+        semaphore = asyncio.Semaphore(self.concurrent_limit)
+        
+        async def process_single_url(search_result: Dict[str, Any]) -> Dict[str, Any]:
+            """Process a single URL with semaphore control - content only"""
+            async with semaphore:
+                return await self.extract_content_only_single_url(search_result)
+        
+        # Process all URLs in parallel
+        tasks = [process_single_url(result) for result in search_results]
+        
+        # Use tqdm for progress tracking
+        results = []
+        for coro in tqdm.as_completed(tasks, desc="Extracting Content (No Analysis)"):
+            result = await coro
+            results.append(result)
+        
+        # Generate summary statistics
+        total_processed = len(results)
+        successful_extractions = sum(1 for r in results if r.get("extraction_status") == "success")
+        no_content_extractions = sum(1 for r in results if r.get("extraction_status") == "no_content")
+        failed_extractions = sum(1 for r in results if r.get("extraction_status") == "failed")
+        
+        logger.info(f"📊 CONTENT EXTRACTION STATISTICS:")
+        logger.info(f"   📋 Total URLs processed: {total_processed}")
+        logger.info(f"   🔄 Content Extraction Results:")
+        logger.info(f"      ✅ Successful extractions: {successful_extractions}")
+        logger.info(f"      📭 No content found: {no_content_extractions}")
+        logger.info(f"      ❌ Failed extractions: {failed_extractions}")
+        logger.info(f"   📈 Overall success rate: {(successful_extractions/total_processed)*100:.1f}%")
+        logger.info(f"   ℹ️  Note: No AI analysis performed - content extraction only")
+        
+        return results
+
     async def extract_and_analyze_parallel(self, search_results: List[Dict[str, Any]], aliases: List[str], parent_company_name: str) -> List[Dict[str, Any]]:
         """
         Extract content and analyze in parallel - single step approach
