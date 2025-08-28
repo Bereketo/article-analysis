@@ -117,7 +117,8 @@ logger = logging.getLogger(__name__)
     },
     summary="Extract content from URLs",
     description="""
-    Extract and analyze content from a list of URLs using Jina AI and LLM analysis.
+    Extract content from a list of URLs using Jina AI. This endpoint only extracts content without performing analysis.
+    For content analysis, use the /api/cdd/article-analysis endpoint.
     """
 )
 async def extract_content(request: ContentExtractionRequest):
@@ -151,12 +152,8 @@ async def extract_content(request: ContentExtractionRequest):
             }
             search_results.append(search_result)
         
-        # Extract and analyze content
-        processed_results = await extractor.extract_and_analyze_parallel(
-            search_results, 
-            request.aliases, 
-            request.parent_company_name
-        )
+        # Extract content only (no analysis)
+        processed_results = await extractor.extract_content_only_parallel(search_results)
         
         # Format response to match the desired structure
         extracted_content = []
