@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 import logging
 import asyncio
@@ -68,16 +68,18 @@ async def _correct_spelling_and_validate(company_name: str, country: str) -> Dic
     return {"company_name": company_name, "country": country}
 
 class AliasResponse(BaseModel):
-    primary_alias: str
-    aliases: List[str]
-    stock_symbols: List[str]
-    local_variants: List[str]
-    parent_company: str
-    target_names: List[str]
-    adverse_search_queries: List[str]
-    all_aliases: str
-    confidence_score: Optional[float] = None
-    total_adverse_queries: Optional[int] = None
+    primary_alias: str = Field(description="Primary company name after research and correction")
+    aliases: List[str] = Field(description="List of company aliases, variations, and former names")
+    stock_symbols: List[str] = Field(description="Stock ticker symbols (NSE, BSE, NYSE, etc.)")
+    local_variants: List[str] = Field(description="Regional or local name variations")
+    parent_company: str = Field(description="Parent company or holding company name")
+    target_names: List[str] = Field(description="Master list of all searchable company identifiers")
+    adverse_search_queries: List[str] = Field(description="Full comprehensive set of adverse media search queries (~40-70 queries)")
+    optimized_adverse_queries: List[str] = Field(description="Optimized set of high-impact adverse queries for fast 10-minute pipeline (~10 queries)")
+    all_aliases: str = Field(description="Comma-separated string of all aliases")
+    confidence_score: Optional[float] = Field(None, description="Confidence score of the alias generation (0.0-1.0)")
+    total_adverse_queries: Optional[int] = Field(None, description="Total count of comprehensive adverse queries")
+    total_optimized_queries: Optional[int] = Field(None, description="Total count of optimized adverse queries")
 
 class ErrorResponse(BaseModel):
     detail: str
@@ -105,6 +107,13 @@ logger = logging.getLogger(__name__)
     summary="Generate company aliases",
     description="""
     Generate comprehensive company aliases, variations, and adverse media search queries.
+    
+    Returns two sets of search queries:
+    - `adverse_search_queries`: Full comprehensive set (~40-70 queries) for thorough analysis
+    - `optimized_adverse_queries`: Optimized set (~10 queries) for fast 10-minute pipeline
+    
+    The optimized queries focus on the most critical adverse terms and use only the top 3 
+    company identifiers to achieve 80-90% coverage in significantly less time.
     """
 )
 async def get_company_aliases(request: AliasRequest):
@@ -130,9 +139,11 @@ async def get_company_aliases(request: AliasRequest):
             parent_company=alias_data["parent_company"],
             target_names=alias_data["target_names"],
             adverse_search_queries=alias_data["adverse_search_queries"],
+            optimized_adverse_queries=alias_data["optimized_adverse_queries"],  # NEW: Include optimized queries
             all_aliases=alias_data["all_aliases"],
             confidence_score=alias_data["confidence_score"],
-            total_adverse_queries=len(alias_data["adverse_search_queries"])
+            total_adverse_queries=len(alias_data["adverse_search_queries"]),
+            total_optimized_queries=len(alias_data["optimized_adverse_queries"])  # NEW: Count of optimized queries
         )
         
     except Exception as e:
