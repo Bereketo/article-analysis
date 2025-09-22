@@ -5,10 +5,13 @@ import logging
 import json
 import os
 import asyncio
+import time
 from datetime import datetime, timezone, timedelta
 import re
+from tqdm.asyncio import tqdm
 from agents.improved_content_extraction_agent import ImprovedContentExtractionAgent
 from services.email_service import SimpleEmailService
+from services.pdf_report_generator import AdverseMediaPDFReport
 
 def _style_excel_headers(worksheet):
     """Apply styling to Excel worksheet headers"""
@@ -71,6 +74,11 @@ class ArticleInput(BaseModel):
     url: str
     content: str
     title: Optional[str] = None
+    # Include search metadata if available
+    search_engine: Optional[str] = None
+    search_query: Optional[str] = None
+    published_date: Optional[str] = None
+    source: Optional[str] = None
 
 class ArticleAnalysisRequest(BaseModel):
     articles: List[ArticleInput]
@@ -157,32 +165,86 @@ async def analyze_articles(request: ArticleAnalysisRequest):
         results = []
         risk_categories = {}
         
-        # Process articles in parallel
-        tasks = []
-        for i, article in enumerate(request.articles):
-            logger.info(f"📄 Queueing article {i+1}/{len(request.articles)}: {article.url or 'No URL provided'}")
-            task = _process_single_article(
-                article=article,
-                extractor=extractor,
-                aliases=request.aliases,
-                parent_company_name=request.parent_company_name,
-                source=request.source
-            )
-            tasks.append(task)
+        # Process articles with progress tracking using tqdm
         
-        # Gather all results with timeout
-        try:
-            logger.info(f"🚀 Processing {len(tasks)} articles in parallel...")
-            results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=300  # 5 minute timeout for all requests
-            )
-        except asyncio.TimeoutError:
-            logger.error("Article analysis timed out after 5 minutes")
-            raise HTTPException(
-                status_code=504,
-                detail="Article analysis timed out. Please try again with fewer articles or shorter content."
-            )
+        logger.info(f"🔍 Starting analysis for {len(request.articles)} articles with progress tracking")
+        start_time = time.time()
+        
+        # Process articles with progress tracking
+        results = []
+        progress_bar = tqdm(total=len(request.articles), desc="Analyzing Articles", unit="article")
+        
+        # Process articles in batches to show progress
+        batch_size = 10  # Process 10 articles at a time
+        successful_count = 0
+        failed_count = 0
+        
+        for batch_start in range(0, len(request.articles), batch_size):
+            batch_end = min(batch_start + batch_size, len(request.articles))
+            batch_articles = request.articles[batch_start:batch_end]
+            
+            # Process batch in parallel
+            batch_tasks = []
+            for i, article in enumerate(batch_articles):
+                actual_index = batch_start + i
+                logger.debug(f"📄 Queueing article {actual_index+1}/{len(request.articles)}: {article.url or 'No URL provided'}")
+                task = _process_single_article(
+                    article=article,
+                    extractor=extractor,
+                    aliases=request.aliases,
+                    parent_company_name=request.parent_company_name,
+                    source=request.source
+                )
+                batch_tasks.append(task)
+            
+            # Wait for batch completion
+            try:
+                batch_results = await asyncio.wait_for(
+                    asyncio.gather(*batch_tasks, return_exceptions=True),
+                    timeout=300  # 5 minute timeout per batch
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"⚠️ Batch {batch_start//batch_size + 1} timed out, continuing...")
+                batch_results = [Exception("Timeout") for _ in batch_tasks]
+            
+            # Process batch results
+            for i, result in enumerate(batch_results):
+                actual_index = batch_start + i
+                if isinstance(result, Exception):
+                    failed_count += 1
+                    logger.error(f"❌ Error processing article {actual_index + 1}: {str(result)}")
+                else:
+                    successful_count += 1
+                    results.append(result)
+                
+                # Update progress
+                progress_bar.update(1)
+                
+                # Show progress every 50 articles
+                if (actual_index + 1) % 50 == 0:
+                    elapsed_time = time.time() - start_time
+                    avg_time_per_article = elapsed_time / (actual_index + 1)
+                    remaining_articles = len(request.articles) - (actual_index + 1)
+                    estimated_remaining_time = avg_time_per_article * remaining_articles
+                    
+                    logger.info(f"📊 Progress Update:")
+                    logger.info(f"   • Processed: {actual_index + 1}/{len(request.articles)} articles")
+                    logger.info(f"   • Success: {successful_count}, Failed: {failed_count}")
+                    logger.info(f"   • Elapsed time: {elapsed_time/60:.1f} minutes")
+                    logger.info(f"   • Estimated remaining: {estimated_remaining_time/60:.1f} minutes")
+                    logger.info(f"   • Current rate: {(actual_index + 1)/elapsed_time*60:.1f} articles/minute")
+        
+        progress_bar.close()
+        
+        # Final statistics
+        total_time = time.time() - start_time
+        logger.info(f"📊 FINAL ANALYSIS STATISTICS:")
+        logger.info(f"   • Total articles processed: {len(request.articles)}")
+        logger.info(f"   • Successful analyses: {successful_count}")
+        logger.info(f"   • Failed analyses: {failed_count}")
+        logger.info(f"   • Success rate: {(successful_count/len(request.articles)*100):.1f}%")
+        logger.info(f"   • Total processing time: {total_time/60:.1f} minutes")
+        logger.info(f"   • Average time per article: {total_time/len(request.articles):.2f} seconds")
         
         # Process results and collect statistics
         successful_results = []
@@ -263,15 +325,11 @@ async def analyze_articles(request: ArticleAnalysisRequest):
         excel_filepath = os.path.join(output_dir, excel_filename)
         csv_filepath = excel_filepath.replace('.xlsx', '.csv')
 
-        # Convert results to DataFrame format matching notebook structure
+        # Convert results to DataFrame format
         def extract_metadata_field(result, field, default=None):
             """Helper to extract fields from raw LLM analysis structure for Excel export"""
-            # Use raw_analysis_for_excel instead of the processed analysis
-            analysis = result.get('raw_analysis_for_excel', {}) or {}
-            
-            # Fallback to processed analysis if raw analysis is not available
-            if not analysis or (isinstance(analysis, dict) and not analysis):
-                analysis = result.get('analysis', {}) or {}
+            # Always use the processed analysis which we know works correctly
+            analysis = result.get('analysis', {}) or {}
             
             # Handle case where analysis might be a list (shouldn't happen with new logic, but keep for safety)
             if isinstance(analysis, list):
@@ -280,10 +338,14 @@ async def analyze_articles(request: ArticleAnalysisRequest):
                 else:
                     return default
             
+            if not isinstance(analysis, dict):
+                logger.warning(f"Analysis is not a dict for field '{field}', got: {type(analysis)}")
+                return default
+            
             # For fields that should be at the top level of analysis (based on ArticleContent model)
             top_level_fields = {
                 'author', 'keywords', 'is_filter', 'is_filter_reason', 
-                'is_adverse', 'is_adverse_reason'
+                'is_adverse', 'is_adverse_reason', 'published_date'
             }
             
             # For fields that should be in the metadata sub-object (based on ArticleMetadata model)
@@ -294,11 +356,9 @@ async def analyze_articles(request: ArticleAnalysisRequest):
                 'is_subsadariy_parent_company_reason'
             }
             
-            if not isinstance(analysis, dict):
-                return default
-                
             # Check top level first for top-level fields
             if field in top_level_fields and field in analysis:
+                logger.debug(f"Found '{field}' at top level: {analysis[field]}")
                 return analysis[field]
             
             # Check metadata for metadata fields or as fallback
@@ -308,12 +368,15 @@ async def analyze_articles(request: ArticleAnalysisRequest):
                 metadata = {}
             
             if isinstance(metadata, dict) and field in metadata:
+                logger.debug(f"Found '{field}' in metadata: {metadata[field]}")
                 return metadata[field]
             
             # Fallback to top level for any field not found in metadata
             if field in analysis:
+                logger.debug(f"Found '{field}' at top level (fallback): {analysis[field]}")
                 return analysis[field]
                 
+            logger.debug(f"Field '{field}' not found, using default: {default}")
             return default
         
         df_data = []
@@ -328,8 +391,6 @@ async def analyze_articles(request: ArticleAnalysisRequest):
             else:
                 logger.debug(f"Fallback to processed analysis for Excel export for URL: {result.get('url', 'Unknown')}")
             
-            # Skip Jina content extraction for performance
-            
             # Clean keywords field (convert list to string if needed)
             keywords = extract_metadata_field(result, 'keywords', [])
             if isinstance(keywords, list) and keywords:
@@ -337,33 +398,82 @@ async def analyze_articles(request: ArticleAnalysisRequest):
             elif not isinstance(keywords, str):
                 keywords = ''
             
+            author_or_source = ''
+            # First try to get from the original article input
+            original_article = None
+            for orig_article in request.articles:
+                if orig_article.url == result.get('url'):
+                    original_article = orig_article
+                    break
+            
+            if original_article and original_article.source:
+                author_or_source = original_article.source
+            else:
+                # Fallback to LLM analysis
+                author_or_source = extract_metadata_field(result, 'author', '')
+                
+                # Extract URL domain as final fallback if no author
+                if not author_or_source:
+                    try:
+                        from urllib.parse import urlparse
+                        parsed_url = urlparse(result.get('url', ''))
+                        author_or_source = parsed_url.netloc or ''
+                    except Exception:
+                        author_or_source = ''
+            
+            # Extract date - use original search results date first
+            article_date = ''
+            if original_article and original_article.published_date:
+                article_date = original_article.published_date
+            else:
+                # Fallback to LLM analysis
+                article_date = extract_metadata_field(result, 'published_date', '')
+            
+            # Get risk assessment and conditionally extract risk reason
+            risk_assessment = extract_metadata_field(result, 'is_adverse', 'Neutral')
+            risk_reason = ''
+            # Only populate risk reason for negative articles
+            if risk_assessment == 'Negative':
+                risk_reason = extract_metadata_field(result, 'is_adverse_reason', '')
+            
+            # Get search metadata from original input
+            search_engine = ''
+            search_query = ''
+            if original_article:
+                search_engine = original_article.search_engine or ''
+                search_query = original_article.search_query or ''
+            
+            # Create row in Excel format (without Search Engine and Search Query Used)
             row = {
-                # Basic URL and content info (matching notebook)
-                'url': result.get('url', ''),
-                'title': result.get('title', ''),
-                'is_adverse': extract_metadata_field(result, 'is_adverse', 'Neutral'),
-                'is_adverse_reason': extract_metadata_field(result, 'is_adverse_reason', ''),
-                'risk_category': extract_metadata_field(result, 'risk_category', ''),
-                'risk_explanation': extract_metadata_field(result, 'risk_explanation', ''),
-                'risk_snippet': extract_metadata_field(result, 'risk_snippet', ''),
-                'priority_level': extract_metadata_field(result, 'priority_level', ''),
+                'Company Name': request.parent_company_name,
+                'Title': result.get('title', ''),
+                'URL': result.get('url', ''),
+                'Description': result.get('content', '')[:500] + '...' if len(result.get('content', '')) > 500 else result.get('content', ''),
+                'Source': author_or_source,
+                'Date': article_date,
                 
-                # Risk flags
-                'has_fraud': extract_metadata_field(result, 'has_fraud', False),
-                'has_litigation': extract_metadata_field(result, 'has_litigation', False), 
-                'has_insolvency': extract_metadata_field(result, 'has_insolvency', False),
-                'has_regulatory_action': extract_metadata_field(result, 'has_regulatory_action', False),
+                # Analysis-specific fields 
+                'Risk Assessment': risk_assessment,
+                'Risk Reason': risk_reason,  # Only populated for negative articles
+                'Risk Category': extract_metadata_field(result, 'risk_category', ''),
+                'Risk Explanation': extract_metadata_field(result, 'risk_explanation', ''),
+                'Risk Snippet': extract_metadata_field(result, 'risk_snippet', ''),
+                'Priority Level': extract_metadata_field(result, 'priority_level', ''),
+                'Keywords': keywords,
                 
-                # Author and metadata
-                'author': extract_metadata_field(result, 'author', ''),
-                'keywords': keywords,
+                # Risk flags 
+                'Has Fraud': extract_metadata_field(result, 'has_fraud', False),
+                'Has Litigation': extract_metadata_field(result, 'has_litigation', False),
+                'Has Insolvency': extract_metadata_field(result, 'has_insolvency', False),
+                'Has Regulatory Action': extract_metadata_field(result, 'has_regulatory_action', False),
                 
-                # Company relationship (matching notebook field names)
-                'is_subsidiary_parent_company': extract_metadata_field(result, 'is_subsadariy_parent_company', False),
-                'is_subsidiary_parent_company_reason': extract_metadata_field(result, 'is_subsadariy_parent_company_reason', ''),
+                # Parent/subsidiary relationship (preserve all)
+                'Parent Company Impact': extract_metadata_field(result, 'is_subsadariy_parent_company', False),
+                'Parent Company Impact Reason': extract_metadata_field(result, 'is_subsadariy_parent_company_reason', ''),
                 
-                # Event timeline only
-                'event_timeline': extract_metadata_field(result, 'event_timeline', ''),
+                # Filter status
+                'Is Filtered': extract_metadata_field(result, 'is_filter', False),
+                'Filter Reason': extract_metadata_field(result, 'is_filter_reason', ''),
             }
             
             df_data.append(row)
@@ -371,14 +481,15 @@ async def analyze_articles(request: ArticleAnalysisRequest):
         # Create DataFrame
         df = pd.DataFrame(df_data)
         
-        # Define export columns (removed content_length, confidence_score, source_query, and published_date)
+        # Define export columns - remove Search Engine and Search Query Used since they're not meaningful
         export_columns = [
-            'url', 'title', 'is_adverse', 'is_adverse_reason',
-            'risk_category', 'risk_explanation', 'risk_snippet', 'priority_level',
-            'has_fraud', 'has_litigation', 'has_insolvency',
-            'has_regulatory_action', 'author', 'keywords',
-            'is_subsidiary_parent_company', 'is_subsidiary_parent_company_reason',
-            'event_timeline'
+            # Core article data (6 columns instead of 8)
+            'Company Name', 'Title', 'URL', 'Description', 'Source', 'Date',
+            
+            # Analysis-specific columns (preserve ALL fields)
+            'Risk Assessment', 'Risk Reason', 'Risk Category', 'Risk Explanation', 'Risk Snippet', 'Priority Level',
+            'Keywords', 'Has Fraud', 'Has Litigation', 'Has Insolvency', 'Has Regulatory Action',
+            'Parent Company Impact', 'Parent Company Impact Reason', 'Is Filtered', 'Filter Reason'
         ]
         
         # Ensure all export columns exist
@@ -386,80 +497,109 @@ async def analyze_articles(request: ArticleAnalysisRequest):
             if col not in df.columns:
                 df[col] = ''
         
-        # Filter data (remove filtered articles if needed)
-        df_cleaned = df.copy()
+        # Debug the dataframe before filtering
+        logger.info(f"📊 DataFrame before filtering: {len(df)} rows")
+        if len(df) > 0:
+            logger.info(f"🔍 'Is Filtered' column values: {df['Is Filtered'].value_counts().to_dict()}")
+            logger.info(f"🔍 Sample row data: {df.iloc[0].to_dict() if len(df) > 0 else 'No data'}")
         
-        # Separate into segments (matching notebook logic)
-        subsidiary_articles = df_cleaned[df_cleaned['is_subsidiary_parent_company'] == False].copy()
-        parent_impact_articles = df_cleaned[df_cleaned['is_subsidiary_parent_company'] == True].copy()
-        adverse_articles = df_cleaned[df_cleaned['is_adverse'] == 'Negative'].copy()
+        # Fix filtering logic - properly handle boolean values
+        if 'Is Filtered' in df.columns and len(df) > 0:
+            # Convert to proper boolean and filter out only True values
+            df['Is Filtered'] = df['Is Filtered'].astype(bool)
+            df_cleaned = df[~df['Is Filtered']].copy()  # Use ~ for NOT operator with boolean
+            logger.info(f"📊 Articles after filtering: {len(df_cleaned)} rows (removed {len(df) - len(df_cleaned)} filtered articles)")
+        else:
+            df_cleaned = df.copy()
+            logger.info(f"📊 No filtering applied, keeping all {len(df_cleaned)} articles")
+        
+        # Separate into segments using new column names
+        subsidiary_articles = df_cleaned[df_cleaned['Parent Company Impact'] == False].copy()
+        parent_impact_articles = df_cleaned[df_cleaned['Parent Company Impact'] == True].copy()
+        adverse_articles = df_cleaned[df_cleaned['Risk Assessment'] == 'Negative'].copy()
         
         # Export to Excel with multiple sheets and styled headers
-        with pd.ExcelWriter(excel_filepath, engine='openpyxl') as writer:
-            # Sheet 1: All cleaned articles
-            df_cleaned[export_columns].to_excel(
-                writer, 
-                sheet_name='All_Articles', 
-                index=False
-            )
-            _style_excel_headers(writer.book['All_Articles'])
-            
-            # Sheet 2: Subsidiary-specific articles
-            if len(subsidiary_articles) > 0:
-                subsidiary_articles[export_columns].to_excel(
+        try:
+            with pd.ExcelWriter(excel_filepath, engine='openpyxl') as writer:
+                # Sheet 1: All cleaned articles
+                df_cleaned[export_columns].to_excel(
                     writer, 
-                    sheet_name='Subsidiary_Specific', 
+                    sheet_name='All_Articles', 
                     index=False
                 )
-                _style_excel_headers(writer.book['Subsidiary_Specific'])
-            
-            # Sheet 3: Parent company impact articles
-            if len(parent_impact_articles) > 0:
-                parent_impact_articles[export_columns].to_excel(
+                _style_excel_headers(writer.book['All_Articles'])
+                
+                # Sheet 2: Subsidiary-specific articles
+                if len(subsidiary_articles) > 0:
+                    subsidiary_articles[export_columns].to_excel(
+                        writer, 
+                        sheet_name='Subsidiary_Specific', 
+                        index=False
+                    )
+                    _style_excel_headers(writer.book['Subsidiary_Specific'])
+                
+                # Sheet 3: Parent company impact articles
+                if len(parent_impact_articles) > 0:
+                    parent_impact_articles[export_columns].to_excel(
+                        writer, 
+                        sheet_name='Parent_Company_Impact', 
+                        index=False
+                    )
+                    _style_excel_headers(writer.book['Parent_Company_Impact'])
+                
+                # Sheet 4: Adverse articles only
+                if len(adverse_articles) > 0:
+                    adverse_articles[export_columns].to_excel(
+                        writer, 
+                        sheet_name='Adverse_Only', 
+                        index=False
+                    )
+                    _style_excel_headers(writer.book['Adverse_Only'])
+                
+                # Sheet 5: Summary statistics (matching notebook)
+                summary_data = [
+                    ['Parent Company', request.parent_company_name],
+                    ['Analysis Date', datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')],
+                    ['Total Articles Processed', len(df)],
+                    ['Articles After Cleaning', len(df_cleaned)],
+                    ['Subsidiary-Specific Articles', len(subsidiary_articles)],
+                    ['Parent Company Impact Articles', len(parent_impact_articles)],
+                    ['Adverse Articles', len(adverse_articles)],
+                    ['', ''],
+                    ['Adverse Distribution', ''],
+                ]
+                
+                # Add adverse statistics 
+                if len(df_cleaned) > 0:
+                    adverse_stats = df_cleaned['Risk Assessment'].value_counts()
+                    for status, count in adverse_stats.items():
+                        summary_data.append([f'{status} Articles', f'{count} ({count/len(df_cleaned)*100:.1f}%)'])
+                
+                summary_df = pd.DataFrame(summary_data, columns=['Metric', 'Value'])
+                summary_df.to_excel(
                     writer, 
-                    sheet_name='Parent_Company_Impact', 
+                    sheet_name='Summary', 
                     index=False
                 )
-                _style_excel_headers(writer.book['Parent_Company_Impact'])
-            
-            # Sheet 4: Adverse articles only
-            if len(adverse_articles) > 0:
-                adverse_articles[export_columns].to_excel(
-                    writer, 
-                    sheet_name='Adverse_Only', 
-                    index=False
-                )
-                _style_excel_headers(writer.book['Adverse_Only'])
-            
-            # Sheet 5: Summary statistics (matching notebook)
-            summary_data = [
-                ['Parent Company', request.parent_company_name],
-                ['Analysis Date', datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')],
-                ['Total Articles Processed', len(df)],
-                ['Articles After Cleaning', len(df_cleaned)],
-                ['Subsidiary-Specific Articles', len(subsidiary_articles)],
-                ['Parent Company Impact Articles', len(parent_impact_articles)],
-                ['Adverse Articles', len(adverse_articles)],
-                ['', ''],
-                ['Adverse Distribution', ''],
-            ]
-            
-            # Add adverse statistics
-            if len(df_cleaned) > 0:
-                adverse_stats = df_cleaned['is_adverse'].value_counts()
-                for status, count in adverse_stats.items():
-                    summary_data.append([f'{status} Articles', f'{count} ({count/len(df_cleaned)*100:.1f}%)'])
-            
-            summary_df = pd.DataFrame(summary_data, columns=['Metric', 'Value'])
-            summary_df.to_excel(
-                writer, 
-                sheet_name='Summary', 
-                index=False
-            )
-            _style_excel_headers(writer.book['Summary'])
+                _style_excel_headers(writer.book['Summary'])
+                
+        except Exception as excel_error:
+            logger.error(f"❌ Error creating Excel file: {str(excel_error)}")
+            # Try to create a basic Excel file without styling if the styled version fails
+            try:
+                with pd.ExcelWriter(excel_filepath, engine='openpyxl') as simple_writer:
+                    df_cleaned[export_columns].to_excel(simple_writer, sheet_name='All_Articles', index=False)
+                logger.info(f"✅ Created basic Excel file after styling failed")
+            except Exception as simple_excel_error:
+                logger.error(f"❌ Failed to create even basic Excel file: {str(simple_excel_error)}")
+                raise HTTPException(status_code=500, detail=f"Excel generation failed: {str(simple_excel_error)}")
         
         # Export main dataset to CSV (matching notebook)
-        df_cleaned[export_columns].to_csv(csv_filepath, index=False)
+        try:
+            df_cleaned[export_columns].to_csv(csv_filepath, index=False)
+        except Exception as csv_error:
+            logger.warning(f"⚠️ Failed to create CSV file: {str(csv_error)}")
+            # Continue without CSV if it fails
         
         logger.info(f"📊 Excel analysis results written to {excel_filepath}")
         logger.info(f"📄 CSV analysis results written to {csv_filepath}")
@@ -471,6 +611,34 @@ async def analyze_articles(request: ArticleAnalysisRequest):
         logger.info(f"   Parent Company Impact sheet: {len(parent_impact_articles)} rows")
         logger.info(f"   Adverse Only sheet: {len(adverse_articles)} rows")
         logger.info(f"   Summary sheet: Analysis metadata")
+        
+        # Generate PDF Report for adverse findings
+        pdf_report_path = None
+        try:
+            logger.info(f"📄 Generating PDF report for adverse media findings...")
+            pdf_generator = AdverseMediaPDFReport()
+            
+            # Convert successful_results to format expected by PDF generator
+            pdf_data = {
+                'company_name': request.parent_company_name,
+                'results': successful_results,
+                'processed_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+            # Generate PDF report in same directory as Excel
+            pdf_dir = os.path.join(output_dir, 'pdf-reports')
+            pdf_report_path = await pdf_generator.generate_from_analysis_results(
+                pdf_data,
+                output_dir=pdf_dir
+            )
+            
+            logger.info(f"✅ PDF report generated: {pdf_report_path}")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to generate PDF report: {str(e)}")
+            logger.debug(f"PDF generation error details:", exc_info=True)
+            # Don't fail the whole request if PDF generation fails
+            pdf_report_path = None
         
         # Send Excel results via email
         try:
