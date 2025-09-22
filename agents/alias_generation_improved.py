@@ -170,6 +170,9 @@ Research "{company_name}" now and provide the comprehensive JSON response:"""
         all_aliases = safe_get("all_aliases", ", ".join(aliases[:5]))
         confidence_score = data.get("confidence_score", 0.7)
         
+        # Generate optimized queries for fast mode
+        optimized_queries = self._generate_optimized_adverse_queries(primary_alias, aliases, parent_company, stock_symbols, local_variants)
+        
         return {
             "primary_alias": str(primary_alias),
             "aliases": aliases if isinstance(aliases, list) else [str(primary_alias)],
@@ -178,6 +181,7 @@ Research "{company_name}" now and provide the comprehensive JSON response:"""
             "target_names": target_names, 
             "parent_company": str(parent_company),
             "adverse_search_queries": adverse_queries,
+            "optimized_adverse_queries": optimized_queries,  # NEW: Add optimized queries
             "all_aliases": str(all_aliases),
             "confidence_score": float(confidence_score) if confidence_score else 0.7
         }
@@ -388,6 +392,124 @@ Research "{company_name}" now and provide the comprehensive JSON response:"""
         logger.info(f"🔍 Generated {len(queries)} structured OR/AND queries")
         return queries
     
+    def _generate_optimized_adverse_queries(self, company_name: str, aliases: List[str], parent_company: str = None, stock_symbols: List[str] = None, local_variants: List[str] = None) -> List[str]:
+        """Generate optimized adverse search queries (~10) for fast 10-minute pipeline.
+        
+        Creates high-impact queries by:
+        1. Using ALL aliases (avoiding stock symbols and local variants)
+        2. Using only 2-3 most critical keyword groups to limit total queries
+        3. Prioritizing most critical adverse terms
+        4. Achieving exactly 10 queries by balancing aliases with reduced keyword groups
+        """
+        
+        # Use ALL aliases but filter out unwanted ones
+        priority_names = []
+        
+        # 1. Always include primary company name
+        priority_names.append(company_name)
+        
+        # 2. Add ALL current aliases (avoid former names, stock symbols, local variants)
+        if aliases and len(aliases) > 1:
+            for alias in aliases:
+                alias_lower = alias.lower()
+                company_lower = company_name.lower()
+                
+                # Skip if it's the same as primary name
+                if alias_lower == company_lower:
+                    continue
+                    
+                # Skip stock symbols (usually all caps, short, and alphanumeric)
+                if len(alias) <= 6 and alias.isupper() and alias.isalpha():
+                    logger.debug(f"Skipping stock symbol alias: {alias}")
+                    continue
+                    
+                # Skip local variants (contain country names or generic terms)
+                country_indicators = ["india", "indian", "ltd india", "limited india", "corporation india"]
+                if any(indicator in alias_lower for indicator in country_indicators):
+                    logger.debug(f"Skipping local variant: {alias}")
+                    continue
+                    
+                # Skip obvious former names patterns
+                former_indicators = ["formerly", "previously", "earlier", "was known", "originally"]
+                if any(indicator in alias_lower for indicator in former_indicators):
+                    logger.debug(f"Skipping former name: {alias}")
+                    continue
+                
+                # Add current alias
+                priority_names.append(alias)
+                logger.debug(f"Added current alias: {alias}")
+        
+        logger.info(f"🎯 Optimized query generation using {len(priority_names)} current aliases: {priority_names}")
+        
+        # Calculate how many keyword groups we need based on number of aliases
+        # Target: exactly 10 queries
+        num_aliases = len(priority_names)
+        
+        if num_aliases <= 3:
+            # Use 3-4 keyword groups for 3 aliases or fewer
+            num_keyword_groups = min(4, 10 // num_aliases + 1)
+        elif num_aliases <= 5:
+            # Use 2 keyword groups for 4-5 aliases
+            num_keyword_groups = 2
+        else:
+            # Use only 1 keyword group for 6+ aliases to stay within 10 queries
+            num_keyword_groups = 1
+        
+        logger.info(f"📊 Strategy: {num_aliases} aliases × {num_keyword_groups} keyword groups = ~{num_aliases * num_keyword_groups} queries")
+        
+        # Define optimized keyword groups (only most critical terms)
+        all_keyword_groups = [
+            # Group 1: Most Critical Financial Crimes (highest priority)
+            ["fraud", "scandal", "corruption", "bribe", "kickback", "scam", "misconduct", "penalty"],
+            
+            # Group 2: Legal & Investigation (high priority)
+            ["lawsuit", "investigation", "arrested", "charged", "accused", "probe", "CBI", "case"],
+            
+            # Group 3: Regulatory Actions (medium priority)
+            ["banned", "sanctions", "violation", "compliance breach", "regulatory action", "penalized"],
+            
+            # Group 4: Serious Criminal Activity (if needed)
+            ["murder", "terrorism", "violence", "organized crime", "criminal enterprise"]
+        ]
+        
+        # Select only the number of keyword groups we calculated
+        selected_keyword_groups = all_keyword_groups[:num_keyword_groups]
+        
+        queries = []
+        
+        # Generate queries: Each alias + each selected keyword group
+        for name in priority_names:
+            for i, keyword_group in enumerate(selected_keyword_groups, 1):
+                # Build query with target name and keyword group
+                target_part = f'"{name}"'
+                keyword_part = f"({' OR '.join(keyword_group)})"
+                query = f"{target_part} AND {keyword_part}"
+                queries.append(query)
+                
+                logger.debug(f"Generated optimized query {len(queries)}: {name} + Group {i}")
+        
+        # If we have fewer than 10 queries, add some high-priority single-term queries
+        if len(queries) < 10:
+            critical_single_terms = ["fraud", "scandal", "corruption", "lawsuit", "investigation"]
+            
+            for term in critical_single_terms:
+                if len(queries) >= 10:
+                    break
+                    
+                # Add single-term query with primary name
+                single_query = f'"{company_name}" AND {term}'
+                if single_query not in queries:  # Avoid duplicates
+                    queries.append(single_query)
+                    logger.debug(f"Added single-term query: {single_query}")
+        
+        # Ensure exactly 10 queries
+        final_queries = queries[:10]
+        
+        logger.info(f"🚀 Generated {len(final_queries)} OPTIMIZED queries for 10-minute pipeline")
+        logger.info(f"📊 Query distribution: {len(priority_names)} names × {len(selected_keyword_groups)} groups = {len(priority_names) * len(selected_keyword_groups)} base queries")
+        
+        return final_queries
+    
     def _create_fallback_data(self, company_name: str, country: str) -> Dict[str, Any]:
         """Create fallback data when LLM fails"""
         variations = self._generate_name_variations(company_name)
@@ -401,6 +523,7 @@ Research "{company_name}" now and provide the comprehensive JSON response:"""
             "target_names": target_names,
             "parent_company": company_name,
             "adverse_search_queries": self._generate_adverse_queries(company_name, variations, company_name, [], [f"{company_name} {country}"]),
+            "optimized_adverse_queries": self._generate_optimized_adverse_queries(company_name, variations, company_name, [], [f"{company_name} {country}"]),
             "all_aliases": ", ".join(variations),
             "confidence_score": 0.3
         }

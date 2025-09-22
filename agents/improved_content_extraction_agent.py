@@ -19,34 +19,8 @@ os.environ["AZURE_OPENAI_API_KEY"] = "1f5d1bb6920844248ea17f61f73f82ac"
 os.environ["AZURE_OPENAI_ENDPOINT"] = "https://ai-gpt-echo.openai.azure.com"
 os.environ["AZURE_OPENAI_API_VERSION"] = "2024-12-01-preview"
 
-# Configure logging for Jupyter notebooks
-def setup_logging():
-    """Setup logging configuration that works in Jupyter notebooks"""
-    # Clear any existing handlers
-    root_logger = logging.getLogger()
-    root_logger.handlers.clear()
-    
-    # Create a stream handler that outputs to stdout (visible in notebooks)
-    handler = logging.StreamHandler(sys.stdout)
-    
-    # Create a detailed formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%H:%M:%S'
-    )
-    handler.setFormatter(formatter)
-    
-    # Set up the logger
-    root_logger.addHandler(handler)
-    root_logger.setLevel(logging.INFO)
-    
-    # Also set up our specific logger
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    return logger
-
-# Initialize logging
-logger = setup_logging()
+# Initialize logger without custom setup to avoid conflicts with FastAPI
+logger = logging.getLogger(__name__)
 
 # Set up Azure OpenAI environment variables
 os.environ["AZURE_OPENAI_API_KEY"] = "1f5d1bb6920844248ea17f61f73f82ac"
@@ -107,7 +81,6 @@ class ArticleMetadata(BaseModel):
     )
 
 class ArticleContent(BaseModel):
-    metadata: ArticleMetadata
     published_date: Optional[str] = Field(
         None, description="Publication date of the article in the format YYYY-MM-DD"
     )
@@ -129,9 +102,10 @@ class ArticleContent(BaseModel):
     is_adverse_reason: Optional[str] = Field(
         None, description="Reason for the adverse classification"
     )
+    metadata: ArticleMetadata
 
 class ImprovedContentExtractionAgent:
-    def __init__(self, num_results=50, concurrent_limit=24, use_duckduckgo=True):
+    def __init__(self, num_results=50, concurrent_limit=24, use_duckduckgo=False):
         self.num_results = num_results
         self.concurrent_limit = concurrent_limit
         self.use_duckduckgo = use_duckduckgo
@@ -165,7 +139,7 @@ class ImprovedContentExtractionAgent:
         }
 
         self.google_search = SerpAPIWrapper(
-            serpapi_api_key="f055086d4349703c4f399e24eb7db6a54b37eb130c2330a2dea1ead04381ccb5",
+            serpapi_api_key="ea260b6a06b118f4c91262705b27121a6d6a32ab73a1ef0d0c54146f7df23224",
             params=self.google_params,
         )
         
@@ -178,7 +152,7 @@ class ImprovedContentExtractionAgent:
             }
             
             self.duckduckgo_search = SerpAPIWrapper(
-                serpapi_api_key="f055086d4349703c4f399e24eb7db6a54b37eb130c2330a2dea1ead04381ccb5",
+                serpapi_api_key="ea260b6a06b118f4c91262705b27121a6d6a32ab73a1ef0d0c54146f7df23224",
                 params=self.duckduckgo_params,
             )
             
@@ -365,24 +339,65 @@ class ImprovedContentExtractionAgent:
 
         ✅ Step 1: Detect Adverse Events
 
-        Identify negative developments only if they demonstrably affect the company (e.g., financial loss, penalties, backlash, failures, key exits).
+        Identify ONLY events that represent genuine harm, violations, or misconduct. Do NOT classify routine business activities as adverse.
 
         ⸻
 
         ✅ Step 2: Assess Tone
 
         Assign one of the following to `is_adverse`:
-            • "Negative" – if harm or critical tone is present
+            • "Negative" – ONLY if the article reports genuinely adverse events such as:
+                - Legal violations, penalties, fines, sanctions
+                - Regulatory actions, investigations, enforcement
+                - Fraud, corruption, misconduct allegations
+                - Criminal charges, arrests, convictions
+                - Significant operational failures causing harm
+                - Bankruptcy, insolvency, financial distress
+                - Major compliance breaches or violations
+                
+            • "Neutral" – for business decisions, strategic changes, or corporate announcements:
+                - Business exits, sector changes, strategic pivots
+                - Organizational restructuring, leadership changes
+                - Mergers, acquisitions, partnerships, joint ventures
+                - Product launches, market expansions
+                - Routine business operations and updates
+                - Financial results (unless indicating distress)
+                
             • "Positive" – if the article reflects growth, progress, or favorable developments
-            • "Neutral" – if the article is informational and balanced
+
+        IMPORTANT: Business strategic decisions (like sector exits, restructuring, leadership changes) are typically NEUTRAL unless they involve legal/regulatory violations or misconduct.
+        
+        ✅ EXAMPLES FOR CLARITY:
+        
+        NEGATIVE Examples:
+        • "Company fined ₹50 crore by SEBI for disclosure violations"
+        • "CEO arrested on fraud charges"
+        • "Regulatory action imposed due to safety violations"
+        • "Company under investigation for money laundering"
+        • "Environmental violations lead to factory shutdown"
+        
+        NEUTRAL Examples:
+        • "Company exits sectors to focus on core business"
+        • "CEO steps down as part of succession planning"
+        • "Company restructures operations for efficiency"
+        • "Company announces new partnership with tech firm"
+        • "Leadership changes as part of strategic realignment"
+        
+        ✅ EDGE CASES - BE CAREFUL:
+        • If an article mentions BOTH neutral business decisions AND adverse events, classify based on the PRIMARY focus
+        • If multiple adverse events are mentioned, classify as "Negative" and focus on the most serious one
+        • When in doubt between Neutral/Negative, lean towards Neutral unless clear harm/violations are evident
+        • Stock price movements alone are NOT adverse unless they indicate fundamental business distress
 
         Provide a concise explanation under `is_adverse_reason`.
 
         ⸻
 
-        ✅ Step 3: Risk Metadata (If is_adverse = "Negative")
+        ✅ Step 3: Risk Metadata (ONLY if is_adverse = "Negative")
 
-        If risk is identified, extract:
+        IMPORTANT: Only populate risk fields if is_adverse = "Negative". For Neutral/Positive articles, leave risk fields empty or set to defaults.
+
+        If is_adverse = "Negative", extract:
             • risk_explanation
             • risk_snippet
             • risk_category (choose from: "Legal", "Financial", "Compliance", "Operational", "Reputational", "Strategic", "Other")
@@ -393,6 +408,13 @@ class ImprovedContentExtractionAgent:
                 - True if parent-company issues affect the subsidiary
                 - False if only the subsidiary is discussed
             • is_subsadariy_parent_company_reason
+
+        If is_adverse = "Neutral" OR "Positive":
+            • Set risk_category = "Other"
+            • Leave risk_explanation = null
+            • Leave risk_snippet = null
+            • Set priority_level = null
+            • Set confidence_score = 0.0
 
         Limit to the most significant risk if multiple exist.
 
@@ -409,7 +431,7 @@ class ImprovedContentExtractionAgent:
 
         🧾 Output Format
         
-        ALWAYS respond with a valid JSON object following the {ArticleContent.model_json_schema()} schema.
+        You should ALWAYS respond with a valid JSON object following the {ArticleContent.model_json_schema()} schema.
         
         For relevant articles: Fill out all applicable fields based on the content analysis.
         For irrelevant articles: Set is_filter=true and provide is_filter_reason, leave other fields as defaults or null.
@@ -432,72 +454,6 @@ class ImprovedContentExtractionAgent:
         ]
 
 
-    async def extract_and_analyze_single_url(self, search_result: Dict[str, Any], aliases: List[str], parent_company_name: str) -> Dict[str, Any]:
-        """Extract content and analyze a single URL - always fresh processing"""
-        url = search_result.get("link", "")
-        
-        try:
-            # Step 1: Extract content from Jina AI
-            logger.debug(f"Extracting content for {url}")
-            jina_content = await self.extract_content_with_jina(url)
-            
-            # Determine extraction status
-            if not jina_content.get("content", ""):
-                search_result["extraction_status"] = "no_content"
-            else:
-                search_result["extraction_status"] = "success"
-            
-            search_result["jina_content"] = jina_content
-            
-            # Check if we have content to analyze
-            content = jina_content.get("content", "")
-            if not content:
-                search_result["analysis"] = {
-                    "is_filter": True,
-                    "is_filter_reason": "No content extracted from URL - skipping AI analysis"
-                }
-                return search_result
-            
-            # Step 2: Run LLM analysis
-            logger.debug(f"Running LLM analysis for {url}")
-            prompt_messages = self._create_analysis_prompt(content, url, aliases, parent_company_name)
-            
-            try:
-                response = await self.llm.ainvoke(prompt_messages)
-                analysis = self.json_parser.parse(response.content)
-                
-                # Handle case where analysis might be a list
-                if isinstance(analysis, list) and len(analysis) > 0:
-                    analysis = analysis[0]
-                elif isinstance(analysis, list) and len(analysis) == 0:
-                    analysis = {
-                        "is_filter": True,
-                        "is_filter_reason": "AI returned empty list - likely filtered content"
-                    }
-                
-                search_result["analysis"] = analysis
-                
-            except Exception as e:
-                logger.error(f"Error in AI analysis for {url}: {str(e)}")
-                analysis = {
-                    "is_filter": True,
-                    "is_filter_reason": f"Analysis failed: {str(e)}"
-                }
-                search_result["analysis"] = analysis
-            
-            return search_result
-            
-        except Exception as e:
-            logger.error(f"Error processing {url}: {str(e)}")
-            search_result["jina_content"] = {}
-            search_result["extraction_status"] = "failed"
-            search_result["extraction_error"] = str(e)
-            search_result["analysis"] = {
-                "is_filter": True,
-                "is_filter_reason": f"Content extraction failed: {str(e)}"
-            }
-            
-            return search_result
 
     async def extract_content_only_single_url(self, search_result: Dict[str, Any]) -> Dict[str, Any]:
         """Extract content from a single URL using Jina AI - NO analysis"""
@@ -569,71 +525,6 @@ class ImprovedContentExtractionAgent:
         
         return results
 
-    async def extract_and_analyze_parallel(self, search_results: List[Dict[str, Any]], aliases: List[str], parent_company_name: str) -> List[Dict[str, Any]]:
-        """
-        Extract content and analyze in parallel - single step approach
-        Both Jina AI extraction and OpenAI analysis happen together for each URL
-        """
-        logger.info(f"🚀 Starting fresh extraction and analysis for {len(search_results)} URLs")
-        logger.info(f"📊 Configuration: concurrent_limit={self.concurrent_limit}")
-        
-        # Create semaphore to limit concurrent requests
-        semaphore = asyncio.Semaphore(self.concurrent_limit)
-        
-        async def process_single_url(search_result: Dict[str, Any]) -> Dict[str, Any]:
-            """Process a single URL with semaphore control"""
-            async with semaphore:
-                return await self.extract_and_analyze_single_url(search_result, aliases, parent_company_name)
-        
-        # Process all URLs in parallel
-        tasks = [process_single_url(result) for result in search_results]
-        
-        # Use tqdm for progress tracking
-        results = []
-        for coro in tqdm.as_completed(tasks, desc="Processing URLs"):
-            result = await coro
-            results.append(result)
-        
-        # Generate summary statistics
-        total_processed = len(results)
-        successful_extractions = sum(1 for r in results if r.get("extraction_status") == "success")
-        no_content_extractions = sum(1 for r in results if r.get("extraction_status") == "no_content")
-        failed_extractions = sum(1 for r in results if r.get("extraction_status") == "failed")
-        
-        def get_analysis_dict(result):
-            """Helper function to safely extract analysis as dictionary"""
-            analysis = result.get("analysis", {})
-            if isinstance(analysis, list) and len(analysis) > 0:
-                return analysis[0]
-            elif isinstance(analysis, list):
-                return {}
-            return analysis
-        
-        # Count AI analysis results
-        actually_analyzed = sum(1 for r in results 
-                              if r.get("extraction_status") == "success" 
-                              and "analysis" in r 
-                              and not any(skip_reason in (get_analysis_dict(r).get("is_filter_reason") or "") 
-                                        for skip_reason in ["no content", "extraction failed", "Analysis failed"]))
-        
-        ai_filtered_articles = sum(1 for r in results 
-                                 if get_analysis_dict(r).get("is_filter", False) 
-                                 and r.get("extraction_status") == "success"
-                                 and "no content" not in (get_analysis_dict(r).get("is_filter_reason") or "")
-                                 and "extraction failed" not in (get_analysis_dict(r).get("is_filter_reason") or ""))
-        
-        logger.info(f"📊 FINAL STATISTICS:")
-        logger.info(f"   📋 Total URLs processed: {total_processed}")
-        logger.info(f"   🔄 Content Extraction Results:")
-        logger.info(f"      ✅ Successful extractions: {successful_extractions}")
-        logger.info(f"      📭 No content found: {no_content_extractions}")
-        logger.info(f"      ❌ Failed extractions: {failed_extractions}")
-        logger.info(f"   🤖 AI Analysis Results:")
-        logger.info(f"      🔍 Successfully analyzed by AI: {actually_analyzed}")
-        logger.info(f"      🏷️  AI-filtered as irrelevant: {ai_filtered_articles}")
-        logger.info(f"   📈 Overall success rate: {(successful_extractions/total_processed)*100:.1f}%")
-        
-        return results
 
     def extract_content(self, queries, start_date=None, end_date=None, relative_df=None, num_results=50):
         """Extract relevant content based on queries using both Google and DuckDuckGo"""
@@ -775,26 +666,257 @@ class ImprovedContentExtractionAgent:
         logger.info(f"   📊 Total before deduplication: {len(all_search_results)}")
         
         return all_search_results
-
-    async def search_and_extract_content(self, search_queries, aliases, parent_company_name, start_date=None, end_date=None):
-        """Search for content and extract detailed content with Jina AI + LangChain analysis"""
+    
+    async def extract_content_parallel(self, queries, start_date=None, end_date=None, relative_df=None, num_results=50):
+        """Extract relevant content based on queries using parallel processing for speed optimization"""
         
-        logger.info(f"Starting fresh search and content extraction")
+        if not start_date:
+            start_date = datetime.now() - timedelta(days=365)
+        if not end_date:
+            end_date = datetime.now()
 
-        # Get search results
-        search_results = self.extract_content(search_queries, num_results=self.num_results)
-        
-        # Deduplicate search results
-        search_results = self._deduplicate_search_results(search_results)
+        logger.info(f"🚀 Starting PARALLEL content extraction for {len(queries)} queries")
+        logger.info(f"📅 Date range: {start_date.date()} to {end_date.date()}")
+        logger.info(f"🔢 Num results per query: {num_results}")
+        logger.info(f"🔍 Search engines: Google + {'DuckDuckGo' if self.use_duckduckgo else 'None'}")
+        logger.info(f"⚡ Concurrent limit: {self.concurrent_limit}")
 
-        # Extract content and analyze - always fresh
-        processed_results = await self.extract_and_analyze_parallel(
-            search_results, aliases, parent_company_name
+        # Calculate date windows
+        total_months = (
+            (end_date.year - start_date.year) * 12
+            + (end_date.month - start_date.month)
+            + 1
         )
+        
+        # Generate all date windows
+        date_windows = []
+        current_date = start_date
+        while current_date < end_date:
+            window_end = min(current_date + relativedelta(months=1), end_date)
+            date_windows.append((current_date, window_end))
+            current_date = window_end
+        
+        logger.info(f"📊 Processing plan: {len(queries)} queries × {len(date_windows)} date windows = {len(queries) * len(date_windows)} search tasks")
+        
+        # Create all search tasks (query + date window + search engine combinations)
+        all_tasks = []
+        
+        for query in queries:
+            for window_start, window_end in date_windows:
+                # Google search task
+                google_task = self._search_single_query_async(
+                    query=query,
+                    start_date=window_start,
+                    end_date=window_end,
+                    search_engine="google",
+                    relative_df=relative_df,
+                    num_results=num_results
+                )
+                all_tasks.append(google_task)
+                
+                # DuckDuckGo search task (if enabled)
+                if self.use_duckduckgo:
+                    ddg_task = self._search_single_query_async(
+                        query=query,
+                        start_date=window_start,
+                        end_date=window_end,
+                        search_engine="duckduckgo",
+                        relative_df=relative_df,
+                        num_results=num_results
+                    )
+                    all_tasks.append(ddg_task)
+        
+        logger.info(f"🔥 Executing {len(all_tasks)} search tasks in parallel with concurrency limit of {self.concurrent_limit}")
+        
+        # Process all tasks in parallel with concurrency control
+        semaphore = asyncio.Semaphore(self.concurrent_limit)
+        
+        async def controlled_task(task):
+            async with semaphore:
+                return await task
+        
+        # Execute all tasks with progress tracking
+        all_search_results = []
+        start_time = datetime.now()
+        
+        tasks_with_control = [controlled_task(task) for task in all_tasks]
+        
+        # Process tasks with progress tracking (avoid tqdm conflicts in FastAPI)
+        completed_tasks = 0
+        
+        try:
+            # Use asyncio.as_completed instead of tqdm.as_completed to avoid logging conflicts
+            for coro in asyncio.as_completed(tasks_with_control):
+                try:
+                    task_results = await coro
+                    if task_results:  # task_results is a list of search results
+                        all_search_results.extend(task_results)
+                    completed_tasks += 1
+                    
+                    # Show progress every 20 tasks
+                    if completed_tasks % 20 == 0:
+                        elapsed_time = (datetime.now() - start_time).total_seconds()
+                        rate = completed_tasks / elapsed_time if elapsed_time > 0 else 0
+                        logger.info(f"📊 Search Progress: {completed_tasks}/{len(all_tasks)} tasks completed ({rate:.1f} tasks/sec)")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Search task failed: {str(e)}")
+                    completed_tasks += 1
+                    
+        except Exception as e:
+            logger.error(f"❌ Error in parallel search execution: {str(e)}")
+        
+        # Final statistics
+        total_time = (datetime.now() - start_time).total_seconds()
+        logger.info(f"⚡ PARALLEL SEARCH COMPLETED:")
+        logger.info(f"   📊 Total tasks: {len(all_tasks)}")
+        logger.info(f"   ✅ Tasks completed: {completed_tasks}")
+        logger.info(f"   🔍 Total results found: {len(all_search_results)}")
+        logger.info(f"   ⏱️ Total time: {total_time/60:.1f} minutes")
+        logger.info(f"   📈 Average rate: {completed_tasks/total_time:.1f} tasks/second")
+        
+        # Log search engine statistics
+        google_results = [r for r in all_search_results if r.get("search_engine") == "google"]
+        ddg_results = [r for r in all_search_results if r.get("search_engine") == "duckduckgo"]
+        
+        logger.info(f"🔍 Search engine breakdown:")
+        logger.info(f"   🔍 Google: {len(google_results)} results")
+        if self.use_duckduckgo:
+            logger.info(f"   🦆 DuckDuckGo: {len(ddg_results)} results")
+        logger.info(f"   📊 Total before deduplication: {len(all_search_results)}")
+        
+        return all_search_results
+    
+    async def _search_single_query_async(self, query: str, start_date: datetime, end_date: datetime, 
+                                       search_engine: str, relative_df=None, num_results=50) -> List[Dict[str, Any]]:
+        """Async wrapper for single query search"""
+        try:
+            if search_engine == "google":
+                return await self._search_google_async(query, start_date, end_date, relative_df, num_results)
+            elif search_engine == "duckduckgo" and self.use_duckduckgo:
+                return await self._search_duckduckgo_async(query, start_date, end_date, relative_df, num_results)
+            else:
+                return []
+        except Exception as e:
+            logger.error(f"❌ Error in {search_engine} search for query '{query}': {str(e)}")
+            return []
+    
+    async def _search_google_async(self, query: str, start_date: datetime, end_date: datetime, 
+                                 relative_df=None, num_results=50) -> List[Dict[str, Any]]:
+        """Async Google search for a single query"""
+        try:
+            # Run synchronous search in thread pool to avoid blocking
+            import concurrent.futures
+            
+            def sync_google_search():
+                try:
+                    google_date_params = self._get_date_range_params(
+                        start_date, end_date, relative_df=relative_df, engine="google"
+                    )
+                    # Create a new search instance to avoid conflicts
+                    google_search = SerpAPIWrapper(
+                        serpapi_api_key="ea260b6a06b118f4c91262705b27121a6d6a32ab73a1ef0d0c54146f7df23224",
+                        params=google_date_params,
+                    )
+                    
+                    response = google_search.results(query)
+                    results = response.get("news_results", [])
+                    
+                    # Add metadata to results
+                    for result in results:
+                        result["source_query"] = query
+                        result["search_engine"] = "google"
+                        result["search_period"] = {
+                            "start": start_date.isoformat(),
+                            "end": end_date.isoformat(),
+                        }
+                    
+                    return results
+                except Exception as e:
+                    logger.error(f"Google search error for '{query}': {str(e)}")
+                    return []
+            
+            # Execute in thread pool
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                results = await loop.run_in_executor(executor, sync_google_search)
+            
+            logger.debug(f"🔍 Google: {len(results)} results for '{query}' ({start_date.date()} to {end_date.date()})")
+            return results
+            
+        except Exception as e:
+            logger.error(f"❌ Google async search failed for '{query}': {str(e)}")
+            return []
+    
+    async def _search_duckduckgo_async(self, query: str, start_date: datetime, end_date: datetime, 
+                                     relative_df=None, num_results=50) -> List[Dict[str, Any]]:
+        """Async DuckDuckGo search for a single query"""
+        try:
+            # Run synchronous search in thread pool to avoid blocking
+            import concurrent.futures
+            
+            def sync_duckduckgo_search():
+                try:
+                    ddg_date_params = self._get_date_range_params(
+                        start_date, end_date, relative_df=relative_df, engine="duckduckgo"
+                    )
+                    
+                    # Calculate pages needed
+                    pages_needed = max(1, (num_results + 9) // 10)
+                    all_ddg_results = []
+                    
+                    for page in range(pages_needed):
+                        page_params = ddg_date_params.copy()
+                        page_params["start"] = page
+                        
+                        # Create a new search instance to avoid conflicts
+                        ddg_search = SerpAPIWrapper(
+                            serpapi_api_key="ea260b6a06b118f4c91262705b27121a6d6a32ab73a1ef0d0c54146f7df23224",
+                            params=page_params,
+                        )
+                        
+                        response = ddg_search.results(query)
+                        page_results = response.get("organic_results", [])
+                        
+                        # Normalize field names and add metadata
+                        for result in page_results:
+                            if "link" not in result and "url" in result:
+                                result["link"] = result["url"]
+                            if "title" not in result and "headline" in result:
+                                result["title"] = result["headline"]
+                            if "snippet" not in result and "body" in result:
+                                result["snippet"] = result["body"]
+                            
+                            result["source_query"] = query
+                            result["search_engine"] = "duckduckgo"
+                            result["search_period"] = {
+                                "start": start_date.isoformat(),
+                                "end": end_date.isoformat(),
+                            }
+                            result["page_number"] = page + 1
+                            result["start_offset"] = page
+                        
+                        all_ddg_results.extend(page_results)
+                        
+                        # Stop if we got fewer results than expected
+                        if len(page_results) < 10:
+                            break
+                    
+                    return all_ddg_results
+                    
+                except Exception as e:
+                    logger.error(f"DuckDuckGo search error for '{query}': {str(e)}")
+                    return []
+            
+            # Execute in thread pool
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                results = await loop.run_in_executor(executor, sync_duckduckgo_search)
+            
+            logger.debug(f"🦆 DuckDuckGo: {len(results)} results for '{query}' ({start_date.date()} to {end_date.date()})")
+            return results
+            
+        except Exception as e:
+            logger.error(f"❌ DuckDuckGo async search failed for '{query}': {str(e)}")
+            return []
 
-        logger.info(f"Completed search and extraction with {len(processed_results)} articles processed")
-
-        return {
-            "search_results": processed_results,
-            "timestamp": datetime.now().isoformat(),
-        } 
