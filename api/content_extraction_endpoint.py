@@ -3,11 +3,19 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import logging
 import re
-from datetime import datetime
-from agents.improved_content_extraction_agent import ImprovedContentExtractionAgent
-from langchain_openai import AzureChatOpenAI
-from langchain.schema import HumanMessage
+import json
 import os
+from datetime import datetime, timezone
+from urllib.parse import urlparse
+from agents.improved_content_extraction_agent import ImprovedContentExtractionAgent
+
+# Simple database tracking (optional)
+try:
+    from services.database_service import SimpleReportDB
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+    SimpleReportDB = None
 
 # Pydantic models for request/response
 class ContentExtractionRequest(BaseModel):
@@ -30,50 +38,6 @@ class ContentExtractionResponse(BaseModel):
 class ErrorResponse(BaseModel):
     detail: str
     error_code: Optional[str] = None
-
-async def _clean_content_with_llm(content: str, company_name: str) -> str:
-    """Clean and format content using LLM to remove special characters and extract key info"""
-    
-    if not content or len(content.strip()) < 50:
-        return content
-    
-    cleaning_prompt = f"""
-    You are a content cleaning assistant. Clean the following article content by:
-    
-    1. Remove special characters, HTML tags, and formatting artifacts
-    2. Fix broken sentences and paragraphs
-    3. Remove navigation elements, ads, and irrelevant content
-    4. Keep only the main article content related to "{company_name}"
-    5. Maintain proper sentence structure and readability
-    6. Remove duplicate sentences or paragraphs
-    
-    Original Content:
-    {content[:3000]}  # Limit content length for LLM
-    
-    Return only the cleaned content without any explanations or metadata.
-    """
-    
-    try:
-        llm = AzureChatOpenAI(
-            openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
-            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-            azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
-            openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-            temperature=0.1
-        )
-        
-        response = await llm.ainvoke([HumanMessage(content=cleaning_prompt)])
-        cleaned_content = response.content.strip()
-        
-        # Basic fallback cleaning if LLM fails
-        if not cleaned_content or len(cleaned_content) < 20:
-            cleaned_content = _basic_content_cleaning(content)
-        
-        return cleaned_content
-        
-    except Exception as e:
-        logger.warning(f"LLM content cleaning failed: {e}")
-        return _basic_content_cleaning(content)
 
 
 def _basic_content_cleaning(content: str) -> str:
@@ -161,11 +125,10 @@ async def extract_content(request: ContentExtractionRequest):
             jina_content = result.get("jina_content", {})
             raw_content = jina_content.get("content", "")
 
-            # Clean content using LLM
-            cleaned_content = await _clean_content_with_llm(raw_content, request.parent_company_name)
+            # Use basic content cleaning instead of LLM (much faster)
+            cleaned_content = _basic_content_cleaning(raw_content)
             
             # Extract domain from URL
-            from urllib.parse import urlparse
             parsed_url = urlparse(result.get("link", ""))
             source_domain = parsed_url.netloc
             
@@ -180,8 +143,8 @@ async def extract_content(request: ContentExtractionRequest):
                     "language": jina_content.get("language", "en"),
                     "extraction_status": result.get("extraction_status", "unknown"),
                     "extraction_metadata": {
-                        "extractor": "jina-ai+llm",
-                        "version": "2.0"
+                        "extractor": "jina-ai+basic-cleaning",
+                        "version": "2.1"
                     }
                 }
             }
@@ -203,11 +166,105 @@ async def extract_content(request: ContentExtractionRequest):
             processing_summary=processing_summary,
             simplified_data=SimplifiedExtractionData(
                 urls=request.urls,
-                content=cleaned_content,
+                content="".join([item.get('content', '') for item in extracted_content[:5]]),  # Sample of first 5 articles
                 aliases=request.aliases,
                 parent_company_name=request.parent_company_name
             )
         )
+        
+        # Save extraction results to JSON file in extracted-content directory
+        try:
+            
+            # Create extracted-content directory if it doesn't exist
+            output_dir = "extracted-content"
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Generate filename with timestamp
+            timestamp_str = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+            # Clean company name for filename
+            clean_company_name = re.sub(r'[^\w\s-]', '', request.parent_company_name).replace(' ', '_')
+            filename = f"{clean_company_name}_content-extraction_{timestamp_str}.json"
+            filepath = os.path.join(output_dir, filename)
+            
+            # Prepare data structure for JSON file (similar to your existing format)
+            json_data = {
+                "metadata": {
+                    "company_name": request.parent_company_name,
+                    "aliases": request.aliases,
+                    "extraction_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "total_urls_requested": len(request.urls),
+                    "total_urls_processed": len(processed_results),
+                    "extraction_statistics": {
+                        "successful": processing_summary["successful_extractions"],
+                        "failed": processing_summary["failed_extractions"],
+                        "success_rate": processing_summary["successful_extractions"] / len(request.urls) * 100 if request.urls else 0
+                    },
+                    "extractor_info": {
+                        "type": "jina-ai+basic-cleaning",
+                        "version": "2.1",
+                        "endpoint": "/api/cdd/extract"
+                    }
+                },
+                "extracted_content": []
+            }
+            
+            # Convert extracted content to match your existing JSON format
+            for i, result in enumerate(processed_results):
+                jina_content = result.get("jina_content", {})
+                raw_content = jina_content.get("content", "")
+                cleaned_content = _basic_content_cleaning(raw_content)
+                
+                # Extract domain from URL
+                parsed_url = urlparse(result.get("link", ""))
+                source_domain = parsed_url.netloc
+                
+                content_entry = {
+                    "index": i,
+                    "link": result.get("link", ""),
+                    "title": jina_content.get("title", result.get("title", "")),
+                    "snippet": result.get("snippet", ""),
+                    "source": source_domain,
+                    "date": result.get("date", ""),
+                    "source_query": result.get("source_query", "direct_url"),
+                    "search_engine": result.get("search_engine", "direct"),
+                    "extraction_status": result.get("extraction_status", "unknown"),
+                    "jina_content": {
+                        "title": jina_content.get("title", ""),
+                        "content": cleaned_content,
+                        "url": jina_content.get("url", result.get("link", "")),
+                        "publishedTime": jina_content.get("publishedTime", ""),
+                        "author": jina_content.get("author", ""),
+                        "language": jina_content.get("language", "en"),
+                        "description": jina_content.get("description", ""),
+                        "keywords": jina_content.get("keywords", []),
+                        "usage": jina_content.get("usage", {})
+                    },
+                    "extraction_metadata": {
+                        "extracted_at": datetime.now(timezone.utc).isoformat(),
+                        "content_length_original": len(jina_content.get("content", "")),
+                        "content_length_cleaned": len(cleaned_content),
+                        "source_domain": source_domain,
+                        "extractor_version": "2.1"
+                    }
+                }
+                
+                json_data["extracted_content"].append(content_entry)
+            
+            # Write JSON file
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(json_data, f, ensure_ascii=False, indent=2)
+            
+            # Calculate file size
+            file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
+            
+            logger.info(f"💾 Content extraction results saved to: {filepath}")
+            logger.info(f"📁 File size: {file_size_mb:.2f} MB")
+            logger.info(f"📊 Saved {len(json_data['extracted_content'])} content entries")
+            
+        except Exception as save_error:
+            logger.error(f"⚠️ Failed to save JSON file: {save_error}")
+            # Don't fail the entire request if saving fails
+            pass
         
         logger.info(f"✅ Content extraction completed. Processed {len(extracted_content)} articles")
         return response
