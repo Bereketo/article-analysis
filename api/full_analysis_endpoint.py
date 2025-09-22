@@ -112,7 +112,7 @@ def continue_analysis(request: ContinueAnalysisRequest):
             raise HTTPException(status_code=500, detail="Missing or malformed 'simplified_data' in search response")
         
         extract_payload = {
-            "urls": simplified_data.get("urls", [])[:5], 
+            "urls": simplified_data.get("urls", []), 
             "aliases": simplified_data.get("aliases", []),
             "parent_company_name": simplified_data.get("parent_company_name", "")
         }
@@ -138,8 +138,8 @@ def continue_analysis(request: ContinueAnalysisRequest):
             } for a in extracted_articles if a.get("url") and a.get("content")
         ]
 
-        # Limit to 5 articles for analysis
-        articles_for_analysis = articles_for_analysis[:5]
+        # we can limit articles for analysis
+        articles_for_analysis = articles_for_analysis
 
         simplified_data = extract_data.get("simplified_data", {})
         aliases = simplified_data.get("aliases") or extract_data.get("processing_summary", {}).get("aliases_used", [])
