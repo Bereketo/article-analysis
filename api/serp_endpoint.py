@@ -24,6 +24,7 @@ class SerpRequest(BaseModel):
     stock_symbols: List[str]
     local_variants: List[str]
     parent_company: str
+    target_names: Optional[List[str]] = Field(None, description="Target company names generated from aliases")
     adverse_search_queries: List[str]
     all_aliases: str
     confidence_score: Optional[float] = None
@@ -104,11 +105,12 @@ async def search_content(request: SerpRequest):
         extractor = ImprovedContentExtractionAgent(
             num_results=10,
             concurrent_limit=24,
-            use_duckduckgo=True  # Explicitly enable DuckDuckGo
+            use_duckduckgo=False  # Disable DuckDuckGo - use Google only
         )
         
         # Get search results from both Google and DuckDuckGo with automatic deduplication
-        search_results = extractor.extract_content(
+        # Use optimized parallel search for faster processing
+        search_results = await extractor.extract_content_parallel(
             queries=request.adverse_search_queries,
             start_date=start_date,
             end_date=end_date,
@@ -146,7 +148,7 @@ async def search_content(request: SerpRequest):
                 'search_engine': result.get('search_engine', 'unknown'),
                 'source_query': result.get('source_query', ''),
                 'used_query': result.get('source_query', ''),  # NEW FIELD: Query used to find this article
-                'search_period': result.get('search_period', {})
+                'search_period': result.get('search_period', {}) 
             }
             serializable_results.append(serializable_result)
         
