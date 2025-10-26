@@ -15,18 +15,19 @@ from pydantic import BaseModel, Field
 import os
 import sys
 
-os.environ["AZURE_OPENAI_API_KEY"] = "1f5d1bb6920844248ea17f61f73f82ac"
-os.environ["AZURE_OPENAI_ENDPOINT"] = "https://ai-gpt-echo.openai.azure.com"
-os.environ["AZURE_OPENAI_API_VERSION"] = "2024-12-01-preview"
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
 
 # Initialize logger without custom setup to avoid conflicts with FastAPI
 logger = logging.getLogger(__name__)
 
-# Set up Azure OpenAI environment variables
-os.environ["AZURE_OPENAI_API_KEY"] = "1f5d1bb6920844248ea17f61f73f82ac"
-os.environ["AZURE_OPENAI_ENDPOINT"] = "https://ai-gpt-echo.openai.azure.com"
-os.environ["AZURE_OPENAI_API_VERSION"] = "2024-12-01-preview"
-os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"] = "gpt-4o"
+# Add NullHandler as fallback to prevent "No handlers" warnings and closed file errors
+if not logger.handlers:
+    logger.addHandler(logging.NullHandler())
+
+
 
 class ArticleMetadata(BaseModel):
     # Adverse Event Detection
@@ -109,15 +110,14 @@ class ImprovedContentExtractionAgent:
         self.num_results = num_results
         self.concurrent_limit = concurrent_limit
         self.use_duckduckgo = use_duckduckgo
-        self.jina_api_key = "jina_80ed8ae9b65c4f25b71edc336f7cbfc07A5rTYKwAFLa1Hpy-33VAsQ8cLPY"
+        self.jina_api_key = os.getenv("JINA_API_KEY")
         
         # Initialize LangChain LLM
         self.llm = AzureChatOpenAI(
             openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
             azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-            azure_deployment="gpt-4o",  # Updated to use gpt-4o deployment
-            openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-            temperature=0
+            azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"]
         )
         
         # Initialize JSON parser
@@ -126,33 +126,47 @@ class ImprovedContentExtractionAgent:
         logger.info("🚀 Initializing ImprovedContentExtractionAgent with fresh extraction and analysis")
         logger.info(f"📊 Configuration: concurrent_limit={concurrent_limit}, num_results={num_results}, use_duckduckgo={use_duckduckgo}")
         
-        # Google search configuration
+        # Load search country configuration from environment variables
+        # Defaults to global/worldwide settings if not specified
+        search_google_domain = os.getenv("SEARCH_GOOGLE_DOMAIN", "google.com")
+        search_google_gl = os.getenv("SEARCH_GOOGLE_GL", "us")
+        search_google_cr = os.getenv("SEARCH_GOOGLE_CR", "")  # Empty = no country restriction (global)
+        search_google_hl = os.getenv("SEARCH_GOOGLE_HL", "en")
+        search_ddg_region = os.getenv("SEARCH_DDG_REGION", "wt-wt")  # Worldwide by default
+        
+        country_label = search_google_cr if search_google_cr else "Global (no restriction)"
+        logger.info(f"🌍 Search Configuration: domain={search_google_domain}, region={search_google_gl}, country_restrict={country_label}")
+        
+        # Google search configuration (now globally configurable)
         self.google_params = {
             "engine": "google",
-            "google_domain": "google.co.in",
-            "gl": "in",
-            "hl": "en",
-            "cr": "countryIN",
+            "google_domain": search_google_domain,
+            "gl": search_google_gl,
+            "hl": search_google_hl,
             "lr": "lang_en",
             "tbm": "nws",
             "num": num_results,
         }
+        
+        # Only add country restriction if specified (not empty)
+        if search_google_cr and search_google_cr.strip():
+            self.google_params["cr"] = search_google_cr
 
         self.google_search = SerpAPIWrapper(
-            serpapi_api_key="ea260b6a06b118f4c91262705b27121a6d6a32ab73a1ef0d0c54146f7df23224",
+            serpapi_api_key=os.getenv("SERPAPI_API_KEY"),
             params=self.google_params,
         )
         
-        # DuckDuckGo search configuration (if enabled)
+        # DuckDuckGo search configuration (if enabled, now globally configurable)
         if self.use_duckduckgo:
             self.duckduckgo_params = {
                 "engine": "duckduckgo",
-                "kl": "in-en",  # India English
+                "kl": search_ddg_region,  # Configurable region
                 "safe": "-1",   # Moderate filtering
             }
             
             self.duckduckgo_search = SerpAPIWrapper(
-                serpapi_api_key="ea260b6a06b118f4c91262705b27121a6d6a32ab73a1ef0d0c54146f7df23224",
+                serpapi_api_key=os.getenv("SERPAPI_API_KEY"),
                 params=self.duckduckgo_params,
             )
             
@@ -520,7 +534,10 @@ class ImprovedContentExtractionAgent:
         logger.info(f"      ✅ Successful extractions: {successful_extractions}")
         logger.info(f"      📭 No content found: {no_content_extractions}")
         logger.info(f"      ❌ Failed extractions: {failed_extractions}")
-        logger.info(f"   📈 Overall success rate: {(successful_extractions/total_processed)*100:.1f}%")
+        
+        # Safe division to avoid ZeroDivisionError
+        success_rate = (successful_extractions/total_processed)*100 if total_processed > 0 else 0.0
+        logger.info(f"   📈 Overall success rate: {success_rate:.1f}%")
         logger.info(f"   ℹ️  Note: No AI analysis performed - content extraction only")
         
         return results
@@ -703,28 +720,30 @@ class ImprovedContentExtractionAgent:
         
         for query in queries:
             for window_start, window_end in date_windows:
-                # Google search task
-                google_task = self._search_single_query_async(
-                    query=query,
-                    start_date=window_start,
-                    end_date=window_end,
-                    search_engine="google",
-                    relative_df=relative_df,
-                    num_results=num_results
-                )
-                all_tasks.append(google_task)
-                
-                # DuckDuckGo search task (if enabled)
-                if self.use_duckduckgo:
-                    ddg_task = self._search_single_query_async(
-                        query=query,
-                        start_date=window_start,
-                        end_date=window_end,
-                        search_engine="duckduckgo",
+                # Create Google search coroutine (don't call it yet!)
+                def create_google_task(q=query, ws=window_start, we=window_end):
+                    return self._search_single_query_async(
+                        query=q,
+                        start_date=ws,
+                        end_date=we,
+                        search_engine="google",
                         relative_df=relative_df,
                         num_results=num_results
                     )
-                    all_tasks.append(ddg_task)
+                all_tasks.append(create_google_task())
+                
+                # Create DuckDuckGo search coroutine (if enabled)
+                if self.use_duckduckgo:
+                    def create_ddg_task(q=query, ws=window_start, we=window_end):
+                        return self._search_single_query_async(
+                            query=q,
+                            start_date=ws,
+                            end_date=we,
+                            search_engine="duckduckgo",
+                            relative_df=relative_df,
+                            num_results=num_results
+                        )
+                    all_tasks.append(create_ddg_task())
         
         logger.info(f"🔥 Executing {len(all_tasks)} search tasks in parallel with concurrency limit of {self.concurrent_limit}")
         
@@ -755,35 +774,48 @@ class ImprovedContentExtractionAgent:
                     
                     # Show progress every 20 tasks
                     if completed_tasks % 20 == 0:
-                        elapsed_time = (datetime.now() - start_time).total_seconds()
-                        rate = completed_tasks / elapsed_time if elapsed_time > 0 else 0
-                        logger.info(f"📊 Search Progress: {completed_tasks}/{len(all_tasks)} tasks completed ({rate:.1f} tasks/sec)")
+                        try:
+                            elapsed_time = (datetime.now() - start_time).total_seconds()
+                            rate = completed_tasks / elapsed_time if elapsed_time > 0 else 0
+                            logger.info(f"📊 Search Progress: {completed_tasks}/{len(all_tasks)} tasks completed ({rate:.1f} tasks/sec)")
+                        except (ValueError, OSError):
+                            pass  # Logger closed, skip progress logging
                         
                 except Exception as e:
-                    logger.error(f"❌ Search task failed: {str(e)}")
+                    try:
+                        logger.error(f"❌ Search task failed: {str(e)}")
+                    except (ValueError, OSError):
+                        pass  # Logger closed, skip error logging
                     completed_tasks += 1
                     
         except Exception as e:
-            logger.error(f"❌ Error in parallel search execution: {str(e)}")
+            try:
+                logger.error(f"❌ Error in parallel search execution: {str(e)}")
+            except (ValueError, OSError):
+                pass  # Logger closed, skip error logging
         
-        # Final statistics
+        # Final statistics - safe logging with fallback
         total_time = (datetime.now() - start_time).total_seconds()
-        logger.info(f"⚡ PARALLEL SEARCH COMPLETED:")
-        logger.info(f"   📊 Total tasks: {len(all_tasks)}")
-        logger.info(f"   ✅ Tasks completed: {completed_tasks}")
-        logger.info(f"   🔍 Total results found: {len(all_search_results)}")
-        logger.info(f"   ⏱️ Total time: {total_time/60:.1f} minutes")
-        logger.info(f"   📈 Average rate: {completed_tasks/total_time:.1f} tasks/second")
-        
-        # Log search engine statistics
-        google_results = [r for r in all_search_results if r.get("search_engine") == "google"]
-        ddg_results = [r for r in all_search_results if r.get("search_engine") == "duckduckgo"]
-        
-        logger.info(f"🔍 Search engine breakdown:")
-        logger.info(f"   🔍 Google: {len(google_results)} results")
-        if self.use_duckduckgo:
-            logger.info(f"   🦆 DuckDuckGo: {len(ddg_results)} results")
-        logger.info(f"   📊 Total before deduplication: {len(all_search_results)}")
+        try:
+            logger.info(f"⚡ PARALLEL SEARCH COMPLETED:")
+            logger.info(f"   📊 Total tasks: {len(all_tasks)}")
+            logger.info(f"   ✅ Tasks completed: {completed_tasks}")
+            logger.info(f"   🔍 Total results found: {len(all_search_results)}")
+            logger.info(f"   ⏱️ Total time: {total_time/60:.1f} minutes")
+            logger.info(f"   📈 Average rate: {completed_tasks/total_time:.1f} tasks/second")
+            
+            # Log search engine statistics
+            google_results = [r for r in all_search_results if r.get("search_engine") == "google"]
+            ddg_results = [r for r in all_search_results if r.get("search_engine") == "duckduckgo"]
+            
+            logger.info(f"🔍 Search engine breakdown:")
+            logger.info(f"   🔍 Google: {len(google_results)} results")
+            if self.use_duckduckgo:
+                logger.info(f"   🦆 DuckDuckGo: {len(ddg_results)} results")
+            logger.info(f"   📊 Total before deduplication: {len(all_search_results)}")
+        except (ValueError, OSError):
+            # Logger closed, skip final statistics logging
+            pass
         
         return all_search_results
     
@@ -798,7 +830,10 @@ class ImprovedContentExtractionAgent:
             else:
                 return []
         except Exception as e:
-            logger.error(f"❌ Error in {search_engine} search for query '{query}': {str(e)}")
+            try:
+                logger.error(f"❌ Error in {search_engine} search for query '{query}': {str(e)}")
+            except (ValueError, OSError):
+                pass  # Logger closed, skip error logging
             return []
     
     async def _search_google_async(self, query: str, start_date: datetime, end_date: datetime, 
@@ -815,7 +850,7 @@ class ImprovedContentExtractionAgent:
                     )
                     # Create a new search instance to avoid conflicts
                     google_search = SerpAPIWrapper(
-                        serpapi_api_key="ea260b6a06b118f4c91262705b27121a6d6a32ab73a1ef0d0c54146f7df23224",
+                        serpapi_api_key=os.getenv("SERPAPI_API_KEY"),
                         params=google_date_params,
                     )
                     
@@ -833,19 +868,30 @@ class ImprovedContentExtractionAgent:
                     
                     return results
                 except Exception as e:
-                    logger.error(f"Google search error for '{query}': {str(e)}")
+                    # Safe logging that handles closed file handles
+                    try:
+                        logger.error(f"Google search error for '{query}': {str(e)}")
+                    except (ValueError, OSError):
+                        # Logger file handle closed, print to stderr as fallback
+                        print(f"Google search error for '{query}': {str(e)}", file=sys.stderr)
                     return []
             
             # Execute in thread pool
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 results = await loop.run_in_executor(executor, sync_google_search)
             
-            logger.debug(f"🔍 Google: {len(results)} results for '{query}' ({start_date.date()} to {end_date.date()})")
+            try:
+                logger.debug(f"🔍 Google: {len(results)} results for '{query}' ({start_date.date()} to {end_date.date()})")
+            except (ValueError, OSError):
+                pass  # Logger closed, skip logging
             return results
             
         except Exception as e:
-            logger.error(f"❌ Google async search failed for '{query}': {str(e)}")
+            try:
+                logger.error(f"❌ Google async search failed for '{query}': {str(e)}")
+            except (ValueError, OSError):
+                print(f"❌ Google async search failed for '{query}': {str(e)}", file=sys.stderr)
             return []
     
     async def _search_duckduckgo_async(self, query: str, start_date: datetime, end_date: datetime, 
@@ -871,7 +917,7 @@ class ImprovedContentExtractionAgent:
                         
                         # Create a new search instance to avoid conflicts
                         ddg_search = SerpAPIWrapper(
-                            serpapi_api_key="ea260b6a06b118f4c91262705b27121a6d6a32ab73a1ef0d0c54146f7df23224",
+                            serpapi_api_key=os.getenv("SERPAPI_API_KEY"),
                             params=page_params,
                         )
                         
@@ -905,18 +951,29 @@ class ImprovedContentExtractionAgent:
                     return all_ddg_results
                     
                 except Exception as e:
-                    logger.error(f"DuckDuckGo search error for '{query}': {str(e)}")
+                    # Safe logging that handles closed file handles
+                    try:
+                        logger.error(f"DuckDuckGo search error for '{query}': {str(e)}")
+                    except (ValueError, OSError):
+                        # Logger file handle closed, print to stderr as fallback
+                        print(f"DuckDuckGo search error for '{query}': {str(e)}", file=sys.stderr)
                     return []
             
             # Execute in thread pool
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 results = await loop.run_in_executor(executor, sync_duckduckgo_search)
             
-            logger.debug(f"🦆 DuckDuckGo: {len(results)} results for '{query}' ({start_date.date()} to {end_date.date()})")
+            try:
+                logger.debug(f"🦆 DuckDuckGo: {len(results)} results for '{query}' ({start_date.date()} to {end_date.date()})")
+            except (ValueError, OSError):
+                pass  # Logger closed, skip logging
             return results
             
         except Exception as e:
-            logger.error(f"❌ DuckDuckGo async search failed for '{query}': {str(e)}")
+            try:
+                logger.error(f"❌ DuckDuckGo async search failed for '{query}': {str(e)}")
+            except (ValueError, OSError):
+                print(f"❌ DuckDuckGo async search failed for '{query}': {str(e)}", file=sys.stderr)
             return []
 

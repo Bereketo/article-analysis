@@ -20,9 +20,7 @@ class AliasGenerationImproved:
             openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
-            openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-            temperature=0.3,
-            max_tokens=2000
+            openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION")
         )
     
     async def generate_aliases(self, company_name: str, country: str = "India") -> Dict[str, Any]:
