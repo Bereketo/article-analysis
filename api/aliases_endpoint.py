@@ -47,8 +47,7 @@ async def _correct_spelling_and_validate(company_name: str, country: str) -> Dic
             openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
             azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
             azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
-            openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-            temperature=0.0
+            openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"]
         )
         
         response = await llm.ainvoke([HumanMessage(content=correction_prompt)])

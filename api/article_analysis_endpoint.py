@@ -412,12 +412,51 @@ async def analyze_articles(request: ArticleAnalysisRequest):
                 # Fallback to LLM analysis
                 author_or_source = extract_metadata_field(result, 'author', '')
                 
-                # Extract URL domain as final fallback if no author
+                # Extract URL domain as final fallback if no author, but clean it up
                 if not author_or_source:
                     try:
                         from urllib.parse import urlparse
                         parsed_url = urlparse(result.get('url', ''))
-                        author_or_source = parsed_url.netloc or ''
+                        domain = parsed_url.netloc or ''
+                        
+                        # Clean up the domain to make it more readable
+                        if domain:
+                            # Remove www. prefix
+                            if domain.startswith('www.'):
+                                domain = domain[4:]
+                            
+                            # Convert common domains to readable names
+                            domain_mapping = {
+                                'timesofindia.indiatimes.com': 'Times of India',
+                                'economictimes.indiatimes.com': 'The Economic Times',
+                                'm.economictimes.com': 'The Economic Times',
+                                'business-standard.com': 'Business Standard',
+                                'financialexpress.com': 'The Financial Express',
+                                'livemint.com': 'Mint',
+                                'hindustantimes.com': 'Hindustan Times',
+                                'indianexpress.com': 'The Indian Express',
+                                'moneycontrol.com': 'Moneycontrol',
+                                'businesstoday.in': 'Business Today',
+                                'cnbctv18.com': 'CNBC TV18',
+                                'ndtv.com': 'NDTV',
+                                'thehindu.com': 'The Hindu',
+                                'indiatoday.in': 'India Today',
+                                'newindianexpress.com': 'The New Indian Express',
+                                'deccanherald.com': 'Deccan Herald',
+                                'tribuneindia.com': 'The Tribune',
+                                'freepressjournal.in': 'Free Press Journal',
+                                'outlookindia.com': 'Outlook India',
+                                'news18.com': 'News18',
+                                'abp.live': 'ABP Live',
+                                'republicworld.com': 'Republic World',
+                                'zeenews.india.com': 'Zee News',
+                            }
+                            
+                            # Use mapped name if available, otherwise use cleaned domain
+                            author_or_source = domain_mapping.get(domain, domain.replace('.com', '').replace('.in', '').title())
+                        else:
+                            author_or_source = ''
+                            
                     except Exception:
                         author_or_source = ''
             

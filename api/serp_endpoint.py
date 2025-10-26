@@ -101,6 +101,11 @@ async def search_content(request: SerpRequest):
             start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
             end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
             logger.info(f"📅 Search time window: {start_date_str} to {end_date_str}")
+        else:
+            # Default to last 365 days when no date range is specified
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=365)
+            logger.info(f"📅 No time window specified, defaulting to last 365 days: {start_date.date()} to {end_date.date()}")
 
         extractor = ImprovedContentExtractionAgent(
             num_results=10,
@@ -223,11 +228,18 @@ async def search_content(request: SerpRequest):
                 }
             }
             
-            # Write to JSON file
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(save_data, f, indent=2, ensure_ascii=False, default=str)
-            
-            logger.info(f"💾 Search results saved to: {file_path}")
+            # Write to JSON file with explicit close
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(save_data, f, indent=2, ensure_ascii=False, default=str)
+                    f.flush()  # Ensure data is written
+                # File is automatically closed here
+                
+                logger.info(f"💾 Search results saved to: {file_path}")
+                
+            except Exception as json_error:
+                logger.error(f"❌ Error writing JSON file: {str(json_error)}")
+                return response  # Return without Excel generation if JSON fails
             
             # Automatically generate Excel file from the JSON
             try:
@@ -235,6 +247,7 @@ async def search_content(request: SerpRequest):
                 excel_path = os.path.join(search_results_dir, excel_filename)
                 
                 logger.info(f"📊 Generating Excel file from JSON...")
+                
                 excel_result = convert_json_to_excel(
                     input_file=file_path, 
                     output_file=excel_path, 
@@ -245,34 +258,34 @@ async def search_content(request: SerpRequest):
                     logger.info(f"📋 Excel file generated: {excel_result}")
                     response.processing_summary["excel_file"] = excel_result
                     
-                    # Upload Excel file to S3 and get download URL
-                    try:
-                        logger.info(f"☁️ Uploading Excel file to S3...")
-                        s3_result = upload_excel_to_s3(
-                            file_path=excel_result,
-                            custom_key=f"search-results/{excel_filename}"
-                        )
-                        
-                        if s3_result["success"]:
-                            logger.info(f"✅ Excel file uploaded to S3: {s3_result['s3_key']}")
-                            response.download_url = s3_result["download_url"]
-                            response.processing_summary["s3_upload"] = {
-                                "success": True,
-                                "s3_key": s3_result["s3_key"],
-                                "bucket_name": s3_result["bucket_name"]
-                            }
-                        else:
-                            logger.warning(f"⚠️ S3 upload failed: {s3_result['error']}")
-                            response.processing_summary["s3_upload"] = {
-                                "success": False,
-                                "error": s3_result["error"]
-                            }
-                    except Exception as s3_error:
-                        logger.error(f"❌ Error uploading to S3: {str(s3_error)}")
-                        response.processing_summary["s3_upload"] = {
-                            "success": False,
-                            "error": f"S3 upload exception: {str(s3_error)}"
-                        }
+                    # Upload Excel file to S3 and get download URL - COMMENTED OUT
+                    # try:
+                    #     logger.info(f"☁️ Uploading Excel file to S3...")
+                    #     s3_result = upload_excel_to_s3(
+                    #         file_path=excel_result,
+                    #         custom_key=f"search-results/{excel_filename}"
+                    #     )
+                    #     
+                    #     if s3_result["success"]:
+                    #         logger.info(f"✅ Excel file uploaded to S3: {s3_result['s3_key']}")
+                    #         response.download_url = s3_result["download_url"]
+                    #         response.processing_summary["s3_upload"] = {
+                    #             "success": True,
+                    #             "s3_key": s3_result["s3_key"],
+                    #             "bucket_name": s3_result["bucket_name"]
+                    #         }
+                    #     else:
+                    #         logger.warning(f"⚠️ S3 upload failed: {s3_result['error']}")
+                    #         response.processing_summary["s3_upload"] = {
+                    #             "success": False,
+                    #             "error": s3_result["error"]
+                    #         }
+                    # except Exception as s3_error:
+                    #     logger.error(f"❌ Error uploading to S3: {str(s3_error)}")
+                    #     response.processing_summary["s3_upload"] = {
+                    #         "success": False,
+                    #         "error": f"S3 upload exception: {str(s3_error)}"
+                    #     }
                     
                     # Send Excel results via email (using specialized search results method)
                     try:
