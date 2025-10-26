@@ -130,13 +130,24 @@ def continue_analysis(request: ContinueAnalysisRequest):
         
 
         # 4. Analyze articles
+        # Get search results to map source information
+        search_results = search_data.get("results_data", {}).get("search_results", [])
+        url_to_source_map = {result.get("link"): result.get("source", "") for result in search_results}
+        
+        logger.info(f"📊 Created source mapping for {len(url_to_source_map)} URLs from search results")
+        
         articles_for_analysis = [
             {
                 "url": a.get("url"),
                 "content": a.get("content"),
-                "title": a.get("title")
+                "title": a.get("title"),
+                "source": url_to_source_map.get(a.get("url"), "")  # Include source from search results
             } for a in extracted_articles if a.get("url") and a.get("content")
         ]
+        
+        # Log how many articles have source information
+        articles_with_source = sum(1 for a in articles_for_analysis if a.get("source"))
+        logger.info(f"📰 {articles_with_source}/{len(articles_for_analysis)} articles have source information")
 
         # we can limit articles for analysis
         articles_for_analysis = articles_for_analysis
