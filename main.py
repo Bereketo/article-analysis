@@ -7,8 +7,6 @@ from api.article_analysis_endpoint import router as article_router
 from api.full_analysis_endpoint import router as aliases2
 from api.timing_estimation_endpoint import router as timing_router
 from api.full_analysis_with_db import router as db_router
-from api.enhanced_pdf_endpoint import router as enhanced_pdf_router
-from api.multi_row_pdf_endpoint import router as multi_row_pdf_router
 import os
 import logging
 import sys
@@ -56,14 +54,21 @@ def setup_logging():
     except Exception as e:
         print(f"Warning: Could not setup console logging: {e}")
     
-    # Create and configure file handler with proper exception handling
-    try:
-        file_handler = logging.FileHandler('app.log', encoding='utf-8', mode='a')
-        file_handler.setLevel(logging.INFO)
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
-    except Exception as e:
-        print(f"Warning: Could not setup file logging: {e}")
+    # Create and configure file handler ONLY if not in reload mode
+    # File handlers cause "I/O operation on closed file" errors in reload mode
+    is_reload_mode = os.getenv("UVICORN_RELOAD", "false").lower() == "true" or '--reload' in sys.argv
+    
+    if not is_reload_mode:
+        try:
+            file_handler = logging.FileHandler('app.log', encoding='utf-8', mode='a')
+            file_handler.setLevel(logging.INFO)
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+            print("✅ File logging enabled: app.log")
+        except Exception as e:
+            print(f"Warning: Could not setup file logging: {e}")
+    else:
+        print("ℹ️  File logging disabled in reload mode to prevent I/O errors")
     
     # Set specific logger levels
     logging.getLogger("agents.improved_content_extraction_agent").setLevel(logging.INFO)
@@ -142,8 +147,6 @@ app.include_router(article_router)
 app.include_router(aliases2)
 app.include_router(timing_router)
 app.include_router(db_router)
-app.include_router(enhanced_pdf_router)
-app.include_router(multi_row_pdf_router)
 
 # Root endpoint
 @app.get("/", tags=["root"])
@@ -168,12 +171,6 @@ async def root():
             "continue_analysis": "/api/cdd/continue-with-tracking",
             "report_status": "/api/cdd/report-status/{uuid}",
             "list_reports": "/api/cdd/reports",
-            "enhanced_pdf": "/api/cdd/generate-enhanced-pdf",
-            "enhanced_pdf_from_uuid": "/api/cdd/generate-enhanced-pdf-from-uuid",
-            "enhanced_pdf_health": "/api/cdd/enhanced-pdf/health",
-            "multi_row_pdf": "/api/cdd/generate-multi-row-pdf",
-            "multi_row_pdf_from_uuid": "/api/cdd/generate-multi-row-pdf-from-uuid",
-            "multi_row_pdf_health": "/api/cdd/multi-row-pdf/health",
             "article_grouping_test": "/api/cdd/article-grouping/test"
         }
     }
