@@ -266,6 +266,9 @@ async def extract_content(request: ContentExtractionRequest):
             # Don't fail the entire request if saving fails
             pass
         
+        # Add file path to response for database tracking
+        response.processing_summary["saved_to_file"] = filepath
+        
         logger.info(f"✅ Content extraction completed. Processed {len(extracted_content)} articles")
         return response
         

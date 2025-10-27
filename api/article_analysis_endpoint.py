@@ -692,8 +692,17 @@ async def analyze_articles(request: ArticleAnalysisRequest):
             logger.error(f"❌ Error sending email: {str(e)}")
             # Don't fail the whole request if email fails
             pass
-
-        return response_data
+        
+        # Add file paths to response for database tracking
+        response_dict = response_data.model_dump()
+        response_dict["file_paths"] = {
+            "json": filepath,
+            "excel": excel_filepath,
+            "csv": csv_filepath,
+            "pdf": pdf_report_path
+        }
+        
+        return response_dict
         
     except Exception as e:
         logger.error(f"❌ Error during article analysis: {str(e)}")
