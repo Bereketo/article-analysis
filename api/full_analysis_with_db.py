@@ -206,10 +206,20 @@ def continue_analysis_with_tracking(request: ContinueAnalysisRequest):
                 
                 db.update_database_fields(report_uuid, fields_to_update)
                 
-                db.update_status(report_uuid, "SEARCH_COMPLETED", "search-worker", {
-                    "found": search_summary.get("total_results", 0),
-                    "deduped": search_summary.get("unique_results", 0)
-                })
+                # Get file paths from search response (Excel file path)
+                search_excel_path = search_summary.get("excel_file")
+                
+                db.update_status(
+                    report_uuid, 
+                    "SEARCH_COMPLETED", 
+                    "search-worker", 
+                    {
+                        "found": search_summary.get("total_results", 0),
+                        "deduped": search_summary.get("unique_results", 0)
+                    },
+                    search_excel_path if search_excel_path else None,
+                    "article_list" if search_excel_path else None
+                )
                 
         except Exception as e:
             if report_uuid:
@@ -276,11 +286,20 @@ def continue_analysis_with_tracking(request: ContinueAnalysisRequest):
             # Update database: extraction completed
             if report_uuid:
                 extract_summary = extract_data.get("processing_summary", {})
-                db.update_status(report_uuid, "EXTRACTION_COMPLETED", "extraction-worker", {
-                    "extracted": extract_summary.get("total_urls_requested", 0),
-                    "successful": extract_summary.get("successful_extractions", 0),
-                    "failed": extract_summary.get("failed_extractions", 0)
-                })
+                # Get file path from extract response
+                extract_file_path = extract_summary.get("saved_to_file")
+                db.update_status(
+                    report_uuid, 
+                    "EXTRACTION_COMPLETED", 
+                    "extraction-worker", 
+                    {
+                        "extracted": extract_summary.get("total_urls_requested", 0),
+                        "successful": extract_summary.get("successful_extractions", 0),
+                        "failed": extract_summary.get("failed_extractions", 0)
+                    }, 
+                    extract_file_path if extract_file_path else None, 
+                    "article_details" if extract_file_path else None
+                )
                 
         except Exception as e:
             if report_uuid:
@@ -326,11 +345,35 @@ def continue_analysis_with_tracking(request: ContinueAnalysisRequest):
                 analysis_summary = analysis_data.get("summary", {})
                 risk_categories = analysis_summary.get("risk_categories", {})
                 
-                db.update_status(report_uuid, "ANALYSIS_COMPLETED", "analysis-worker", {
-                    "analyzed": analysis_summary.get("successful_analyses", 0),
-                    "adverse": risk_categories.get("Negative", 0),
-                    "risk_breakdown": risk_categories
-                }, None, "report")  # File path would be set by analysis endpoint
+                # Get file paths from analysis response
+                file_paths = analysis_data.get("file_paths", {})
+                excel_path = file_paths.get("excel")
+                pdf_path = file_paths.get("pdf")
+                
+                # Save Excel report path
+                db.update_status(
+                    report_uuid, 
+                    "ANALYSIS_COMPLETED", 
+                    "analysis-worker", 
+                    {
+                        "analyzed": analysis_summary.get("successful_analyses", 0),
+                        "adverse": risk_categories.get("Negative", 0),
+                        "risk_breakdown": risk_categories
+                    }, 
+                    excel_path if excel_path else None, 
+                    "report" if excel_path else None
+                )
+                
+                # Save PDF report path separately (if exists)
+                if pdf_path:
+                    db.update_status(
+                        report_uuid,
+                        "ANALYSIS_COMPLETED",
+                        "analysis-worker",
+                        {"pdf_generated": True},
+                        pdf_path,
+                        "pdf_report"
+                    )
                 
         except Exception as e:
             if report_uuid:
@@ -402,7 +445,8 @@ def get_report_status(report_uuid: str):
             "file_paths": {
                 "article_list": report_data["article_list_file_path"],
                 "article_details": report_data["article_details_file_path"],
-                "report": report_data["report_file_path"]
+                "report": report_data["report_file_path"],
+                "pdf_report": report_data["pdf_report_file_path"]
             },
             "updated_at": report_data["updated_at"],
             "start_date": report_data["start_date"],
