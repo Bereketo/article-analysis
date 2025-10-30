@@ -7,6 +7,7 @@ from api.article_analysis_endpoint import router as article_router
 from api.full_analysis_endpoint import router as aliases2
 from api.timing_estimation_endpoint import router as timing_router
 from api.full_analysis_with_db import router as db_router
+from api.download_endpoint import router as download_router
 import os
 import logging
 import sys
@@ -54,21 +55,9 @@ def setup_logging():
     except Exception as e:
         print(f"Warning: Could not setup console logging: {e}")
     
-    # Create and configure file handler ONLY if not in reload mode
-    # File handlers cause "I/O operation on closed file" errors in reload mode
-    is_reload_mode = os.getenv("UVICORN_RELOAD", "false").lower() == "true" or '--reload' in sys.argv
-    
-    if not is_reload_mode:
-        try:
-            file_handler = logging.FileHandler('app.log', encoding='utf-8', mode='a')
-            file_handler.setLevel(logging.INFO)
-            file_handler.setFormatter(formatter)
-            root_logger.addHandler(file_handler)
-            print("✅ File logging enabled: app.log")
-        except Exception as e:
-            print(f"Warning: Could not setup file logging: {e}")
-    else:
-        print("ℹ️  File logging disabled in reload mode to prevent I/O errors")
+    # File logging completely disabled to prevent "I/O operation on closed file" errors
+    # Use console output and redirect to file if needed: uvicorn main:app > app.log 2>&1
+    print("ℹ️  File logging disabled - using console only")
     
     # Set specific logger levels
     logging.getLogger("agents.improved_content_extraction_agent").setLevel(logging.INFO)
@@ -147,6 +136,7 @@ app.include_router(article_router)
 app.include_router(aliases2)
 app.include_router(timing_router)
 app.include_router(db_router)
+app.include_router(download_router)
 
 # Root endpoint
 @app.get("/", tags=["root"])
@@ -168,7 +158,7 @@ async def root():
             "timing_estimation_health": "/api/cdd/timing-estimation/health",
             "aliases2": "/api/cdd/aliases2",
             "create_report": "/api/cdd/create-report",
-            "continue_analysis": "/api/cdd/continue-with-tracking",
+            "create_cdd_report": "/api/cdd/create-cdd-report",
             "report_status": "/api/cdd/report-status/{uuid}",
             "list_reports": "/api/cdd/reports",
             "article_grouping_test": "/api/cdd/article-grouping/test"
