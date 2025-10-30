@@ -17,7 +17,8 @@ from datetime import datetime, timedelta
 # Simple database service
 from services.database_service import SimpleReportDB
 
-class ContinueAnalysisRequest(BaseModel):
+class CDDReportRequest(BaseModel):
+    """Request model for creating a complete CDD report"""
     primary_alias: str
     aliases: List[str]
     stock_symbols: List[str]
@@ -30,7 +31,7 @@ class ContinueAnalysisRequest(BaseModel):
     total_adverse_queries: Optional[int] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
-    # NEW: Optional database tracking
+    # Database tracking fields
     report_uuid: Optional[str] = None
     report_name: Optional[str] = None
     notification_emails: Optional[List[str]] = []
@@ -119,10 +120,11 @@ def create_report_and_start_analysis(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/continue-with-tracking")
-def continue_analysis_with_tracking(request: ContinueAnalysisRequest):
+@router.post("/create-cdd-report")
+def create_cdd_report(request: CDDReportRequest):
     """
-    Continue analysis pipeline with database tracking.
+    Create a complete CDD report with database tracking.
+    Orchestrates search, extraction, and analysis with full file path tracking.
     REUSES all existing endpoint logic from full_analysis_endpoint.py
     """
     db = SimpleReportDB()
@@ -135,7 +137,7 @@ def continue_analysis_with_tracking(request: ContinueAnalysisRequest):
         elif request.report_name and "uuid:" in request.report_name:
             report_uuid = request.report_name.replace("uuid:", "")
         
-        logger.info(f"Continuing analysis with tracking (Report: {report_uuid})")
+        logger.info(f"Creating CDD report with database tracking (Report: {report_uuid})")
         
         # Step 2: Search (REUSE existing logic!)
         search_payload = {
@@ -266,8 +268,9 @@ def continue_analysis_with_tracking(request: ContinueAnalysisRequest):
         if report_uuid:
             db.update_status(report_uuid, "EXTRACTION_IN_PROGRESS", "extraction-worker")
         
+        
         extract_payload = {
-            "urls": urls, 
+                "urls": urls[:5], # for testing purpose 
             "aliases": simplified_data.get("aliases", []),
             "parent_company_name": simplified_data.get("parent_company_name", "")
         }
@@ -350,7 +353,19 @@ def continue_analysis_with_tracking(request: ContinueAnalysisRequest):
                 excel_path = file_paths.get("excel")
                 pdf_path = file_paths.get("pdf")
                 
-                # Save Excel report path
+                # Debug logging for file paths
+                logger.info(f"📁 File paths from analysis response:")
+                logger.info(f"   Excel: {excel_path}")
+                logger.info(f"   PDF: {pdf_path}")
+                
+                # Build file_paths dictionary for database update
+                db_file_paths = {}
+                if excel_path:
+                    db_file_paths["report"] = excel_path
+                if pdf_path:
+                    db_file_paths["pdf_report"] = pdf_path
+                
+                # Save both Excel and PDF report paths in single transaction
                 db.update_status(
                     report_uuid, 
                     "ANALYSIS_COMPLETED", 
@@ -358,22 +373,12 @@ def continue_analysis_with_tracking(request: ContinueAnalysisRequest):
                     {
                         "analyzed": analysis_summary.get("successful_analyses", 0),
                         "adverse": risk_categories.get("Negative", 0),
-                        "risk_breakdown": risk_categories
-                    }, 
-                    excel_path if excel_path else None, 
-                    "report" if excel_path else None
+                        "risk_breakdown": risk_categories,
+                        "excel_generated": bool(excel_path),
+                        "pdf_generated": bool(pdf_path)
+                    },
+                    file_paths=db_file_paths
                 )
-                
-                # Save PDF report path separately (if exists)
-                if pdf_path:
-                    db.update_status(
-                        report_uuid,
-                        "ANALYSIS_COMPLETED",
-                        "analysis-worker",
-                        {"pdf_generated": True},
-                        pdf_path,
-                        "pdf_report"
-                    )
                 
         except Exception as e:
             if report_uuid:

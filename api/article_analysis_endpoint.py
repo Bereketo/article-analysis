@@ -101,6 +101,7 @@ class ArticleAnalysisResponse(BaseModel):
     summary: Dict[str, Any]
     total_articles: int
     processed_at: str
+    file_paths: Optional[Dict[str, Optional[str]]] = None
 
 class ErrorResponse(BaseModel):
     detail: str
